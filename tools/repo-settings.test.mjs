@@ -120,6 +120,25 @@ describe('D1 the data files', () => {
     assert.match(find((d) => { by(d, 'main').name = 'other'; }), /is not one of/);
   });
 
+  it('the data is in the form GitHub reads back: the two pull_request server defaults, an update rule without parameters; either written another way is a finding', () => {
+    const find = (patch) => { const d = clone(loadData()); patch(d); return validateData(d).join('\n'); };
+    const by = (d, name) => d.rulesets.find((r) => r.body.name === name).body;
+    const pr = (d) => by(d, 'main').rules.find((r) => r.type === 'pull_request').parameters;
+    assert.match(find((d) => { delete pr(d).required_reviewers; }), /main: pull_request\.required_reviewers is undefined, GitHub's form is \[\]/);
+    assert.match(find((d) => { pr(d).require_extra_approval_for_unattributed_changes = false; }), /main: pull_request\.require_extra_approval_for_unattributed_changes is false/);
+    assert.match(find((d) => { by(d, 'release-moves').rules.find((r) => r.type === 'update').parameters = { update_allows_fetch_and_merge: false }; }), /release-moves: the update rule has parameters/);
+    assert.match(find((d) => { by(d, 'tags-fixed').rules.find((r) => r.type === 'update').parameters = {}; }), /tags-fixed: the update rule has parameters/);
+  });
+
+  it('an update rule may carry a true update_allows_fetch_and_merge (GitHub reads it back); an empty or all-false parameters object is still a finding', () => {
+    const find = (patch) => { const d = clone(loadData()); patch(d); return validateData(d).join('\n'); };
+    const by = (d, name) => d.rulesets.find((r) => r.body.name === name).body;
+    const upd = (d, name) => by(d, name).rules.find((r) => r.type === 'update');
+    assert.doesNotMatch(find((d) => { upd(d, 'release-moves').parameters = { update_allows_fetch_and_merge: true }; }), /the update rule has parameters/);
+    assert.match(find((d) => { upd(d, 'release-moves').parameters = {}; }), /release-moves: the update rule has parameters/);
+    assert.match(find((d) => { upd(d, 'tags-fixed').parameters = { update_allows_fetch_and_merge: false }; }), /tags-fixed: the update rule has parameters/);
+  });
+
   it('both tag rulesets cover EVERY tag (~ALL), not a pattern per plugin: a tag named release must not be creatable by anyone with write', () => {
     const d = loadData();
     const by = Object.fromEntries(d.rulesets.map((r) => [r.body.name, r.body]));
@@ -180,6 +199,33 @@ describe('D2 the live rulesets', () => {
       assert.equal(r.code, EXIT.DRIFT, `${label}: ${r.lines.join('\n')}`);
       assert.match(r.lines.join('\n'), expected, label);
     }
+  });
+
+  it('GitHub\'s canonical form (read back after the real apply) is no drift: two server defaults on the pull_request rule, no parameters on a false-only update rule', async () => {
+    const d = data();
+    const live = liveFrom(d);
+    const main = rulesetLive(live, 'main').rules.find((x) => x.type === 'pull_request');
+    main.parameters = {
+      required_approving_review_count: 0,
+      dismiss_stale_reviews_on_push: false,
+      required_reviewers: [],
+      require_code_owner_review: false,
+      require_last_push_approval: false,
+      required_review_thread_resolution: true,
+      require_extra_approval_for_unattributed_changes: true,
+      allowed_merge_methods: ['squash'],
+    };
+    const moves = rulesetLive(live, 'release-moves');
+    moves.rules = [{ type: 'creation' }, { type: 'update' }];
+    const r = await check(d, live);
+    assert.equal(r.code, EXIT.MATCH, r.lines.join('\n'));
+    // the same data still sees a real change in those rules
+    main.parameters.required_approving_review_count = 1;
+    moves.rules = [{ type: 'creation' }, { type: 'update', parameters: { update_allows_fetch_and_merge: true } }];
+    const bad = await check(d, live);
+    assert.equal(bad.code, EXIT.DRIFT);
+    assert.match(bad.lines.join('\n'), /ruleset main: rules\.pull_request\.parameters/);
+    assert.match(bad.lines.join('\n'), /ruleset release-moves: rules\.update\.parameters/);
   });
 
   it('an extra unknown ruleset is listed, not drift', async () => {

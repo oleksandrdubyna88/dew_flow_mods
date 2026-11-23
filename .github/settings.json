@@ -15,7 +15,7 @@
     "$note": "One key, titled release-promotion, writable. `key` is the public line the owner's ssh-keygen printed (step 3 of the apply order); until a pull request writes it here the read-back reports it as missing.",
     "title": "release-promotion",
     "read_only": false,
-    "key": ""
+    "key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII7hYHk8SU2LCytWAsC5iDHo1bhVNDDPWlsMqixAS20d"
   },
   "actions": {
     "$note": "Story 2.1 set these; this is their read-back.",
