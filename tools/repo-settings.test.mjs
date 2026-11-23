@@ -130,6 +130,15 @@ describe('D1 the data files', () => {
     assert.match(find((d) => { by(d, 'tags-fixed').rules.find((r) => r.type === 'update').parameters = {}; }), /tags-fixed: the update rule has parameters/);
   });
 
+  it('an update rule may carry a true update_allows_fetch_and_merge (GitHub reads it back); an empty or all-false parameters object is still a finding', () => {
+    const find = (patch) => { const d = clone(loadData()); patch(d); return validateData(d).join('\n'); };
+    const by = (d, name) => d.rulesets.find((r) => r.body.name === name).body;
+    const upd = (d, name) => by(d, name).rules.find((r) => r.type === 'update');
+    assert.doesNotMatch(find((d) => { upd(d, 'release-moves').parameters = { update_allows_fetch_and_merge: true }; }), /the update rule has parameters/);
+    assert.match(find((d) => { upd(d, 'release-moves').parameters = {}; }), /release-moves: the update rule has parameters/);
+    assert.match(find((d) => { upd(d, 'tags-fixed').parameters = { update_allows_fetch_and_merge: false }; }), /tags-fixed: the update rule has parameters/);
+  });
+
   it('both tag rulesets cover EVERY tag (~ALL), not a pattern per plugin: a tag named release must not be creatable by anyone with write', () => {
     const d = loadData();
     const by = Object.fromEntries(d.rulesets.map((r) => [r.body.name, r.body]));

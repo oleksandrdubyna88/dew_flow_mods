@@ -91,19 +91,23 @@ export function loadData(root = ROOT) {
 
 /**
  * The data is written in the form GitHub reads back, so a read-back that differs is a real difference: a pull_request
- * rule carries the two server defaults, and an update rule has no parameters (GitHub drops a false-only object).
+ * rule carries the two server defaults, and an update rule has no parameters unless one is true (GitHub drops an empty or false-only object).
  */
 function canonicalFindings(file, body) {
-  const out = [];
-  for (const rule of body.rules ?? []) {
-    if (rule.type === 'update' && 'parameters' in rule) out.push(`${file}: ${body.name}: the update rule has parameters; GitHub drops a false-only object, so write the rule without them`);
-    if (rule.type === 'pull_request') {
-      const p = rule.parameters ?? {};
-      if (!same(p.required_reviewers, [])) out.push(`${file}: ${body.name}: pull_request.required_reviewers is ${JSON.stringify(p.required_reviewers)}, GitHub's form is []`);
-      if (p.require_extra_approval_for_unattributed_changes !== true) out.push(`${file}: ${body.name}: pull_request.require_extra_approval_for_unattributed_changes is ${JSON.stringify(p.require_extra_approval_for_unattributed_changes)}, GitHub's form is true`);
+  const hasTrueValue = (parameters) => Object.values(parameters ?? {}).some((v) => v === true);
+  return (body.rules ?? []).flatMap((rule) => {
+    if (rule.type === 'update') {
+      return 'parameters' in rule && !hasTrueValue(rule.parameters)
+        ? [`${file}: ${body.name}: the update rule has parameters; GitHub drops an empty or false-only object, so write the rule without them`]
+        : [];
     }
-  }
-  return out;
+    if (rule.type !== 'pull_request') return [];
+    const p = rule.parameters ?? {};
+    return [
+      ...(same(p.required_reviewers, []) ? [] : [`${file}: ${body.name}: pull_request.required_reviewers is ${JSON.stringify(p.required_reviewers)}, GitHub's form is []`]),
+      ...(p.require_extra_approval_for_unattributed_changes === true ? [] : [`${file}: ${body.name}: pull_request.require_extra_approval_for_unattributed_changes is ${JSON.stringify(p.require_extra_approval_for_unattributed_changes)}, GitHub's form is true`]),
+    ];
+  });
 }
 
 /**
