@@ -20,6 +20,8 @@ that lives in `dew_flow_conventions`. The plan is in `todo/PLAN_from_conventions
 npm ci --ignore-scripts                                         # the pinned Claude Code CLI; never run an install script
 npm test                                                        # node --test over tools/*.test.mjs
 node tools/copy-proof.mjs                                       # C1: the plugin folder equals the named conventions commit
+node tools/mods-gate.mjs                                        # the layout gate of HEAD (the promotion runs the same one)
+node .github/scripts/repo-settings.mjs                          # the rulesets, environment, deploy key and Actions settings equal their data (needs the owner's gh login)
 CLAUDE=$(node tools/claude-bin.mjs)                             # the native binary that --ignore-scripts leaves
 "$CLAUDE" plugin validate .                                     # the marketplace root
 "$CLAUDE" plugin validate --json plugins/agent-models > v.json && node tools/type-baseline.mjs v.json

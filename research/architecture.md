@@ -17,26 +17,29 @@ flowchart TB
     mount[".agents/conventions (submodule, tracks release)"]
     ci["ci workflow: tools, plugin, family, actionlint"]
     main["main (pull request only)"]
-    rel["release (coming gate)"]
+    rel["release (moved by the gate only)"]
   end
   machine["a machine: ~/.claude settings"]
   src -- "copy once, proved by C1" --> plugin
   rules -- "mounted" --> mount
   mount --> ci
   tools --> ci
-  main -- "promote-release (not built yet)" --> rel
+  main -- "promote-release: verdict, owner approval, push" --> rel
   rel -- "marketplace add ...#release, auto-update" --> machine
   conv -. "coming: the session step writes the registration" .-> machine
 ```
 
 ## The two refs
 
-`main` is written by pull request only. `release` is the one ref that machines load. Today nothing moves `release`: the
-gate that does it (`promote-release` from `main` only, the green `ci` run of that exact sha, forward only, a version
-gate, a layout gate, a tag `agent-models--v<version>` per promoted version, a deploy key held by a `release`
-environment the owner approves) is story 2.2 of the conventions plan, specified in `todo/PLAN_dew_flow_mods_E2_gate.md`
-there. Until it exists nothing here is released. The tag `agent-models--v1.6.0` is made by the first promotion; the copy
-proof reads it once `plugin.json` goes above 1.6.0 (see [module_marketplace.md](module_marketplace.md)).
+`main` is written by pull request only (ruleset `main`). `release` is the one ref that machines load, and it moves only
+through `.github/workflows/promote-release.yml`: the owner dispatches it against `main` with a sha; the job `verdict` (no
+secret) judges the commit and prints the compare URL; the job `push` (environment `release`, the owner approves) judges it
+again and pushes `release` and the tag `<plugin>--v<version>` in one atomic push with the deploy key. The judgement is the
+green `ci` push run of that exact sha, forward only, a layout gate, a version gate and a free tag. Rulesets let only the
+deploy key create or move `release` and create a version tag, and let nobody rewind or delete either. The rules and
+the settings are data with a read-back: see [module_marketplace.md](module_marketplace.md). Nothing is released until the
+settings are applied and the first promotion runs; that promotion makes the tag `agent-models--v1.6.0`, and the copy
+proof reads it once `plugin.json` goes above 1.6.0.
 
 What is on `release` runs on every machine with the owner's permissions and outside any sandbox: a change under
 `plugins/` needs a higher `plugin.json` version, and a plugin folder holds no `package.json`, lockfile or link that
@@ -64,7 +67,9 @@ registration step retires it; this repository does not touch it.
 
 ## CI
 
-One workflow `ci` (the release gate reads the run of an exact sha) on `pull_request` and `push` to `main`, never
-`pull_request_target`, a read-only token, every action pinned to a full sha, `npm ci --ignore-scripts`, no credential. Four
-jobs: tools, plugin, family, actionlint. `pr-title.yml` checks the pull request title. See [module_tests.md](module_tests.md).
+One workflow `ci` (the release gate reads the push run of an exact sha on `main`; the workflow cancels a superseded run, and
+a cancelled run is not green) on `pull_request` and `push` to `main`, never `pull_request_target`, a read-only token, every
+action pinned to a full sha, `npm ci --ignore-scripts`, no credential. Four jobs: tools (the tools tests, the layout gate, the
+copy proof), plugin, family, actionlint. `pr-title.yml` checks the pull request title. `promote-release.yml` is dispatch-only
+and is the one workflow with an environment and a secret. See [module_tests.md](module_tests.md).
 SonarCloud is not set up (a follow-up for the owner, `todo/README.md`).
