@@ -85,6 +85,152 @@ function blobAt(git, rev, file) {
 const manifestPath = (name) => `plugins/${name}/.claude-plugin/plugin.json`;
 
 /**
+ * The tree of the commit: a top-level lookalike of `plugins/`, a link, a stray file, a forbidden name. Returns the
+ * folder names found under `plugins/`.
+ * Names are judged in lower case: on a case-insensitive disk `Plugins/` IS `plugins/`, and `Package.json` IS package.json.
+ */
+function checkTree(entries, add) {
+  const folders = new Set();
+  const lookalikes = new Set();
+  for (const entry of entries) {
+    const top = entry.path.split("/")[0];
+    if (top !== "plugins" && top.toLowerCase() === "plugins" && !lookalikes.has(top)) {
+      lookalikes.add(top);
+      add(top, "a top-level entry that is `plugins` in other letters; on a case-insensitive disk it is the plugins folder, and only `plugins` is one");
+    }
+    if (entry.path.startsWith("plugins/")) checkPluginEntry(entry, folders, add);
+  }
+  return folders;
+}
+
+/** One entry under `plugins/`: a link, a file outside every plugin folder, a name that installs. */
+function checkPluginEntry(entry, folders, add) {
+  if (entry.mode === "120000") add(entry.path, "a symlink (mode 120000); a plugin holds no link");
+  else if (entry.mode === "160000") add(entry.path, "a gitlink (mode 160000); a plugin holds no submodule");
+  const segments = entry.path.slice("plugins/".length).split("/");
+  if (segments.length === 1) {
+    if (entry.mode !== "160000") add(entry.path, "a file directly under plugins/; every file belongs to a plugin folder");
+    return;
+  }
+  folders.add(segments[0]);
+  if (FORBIDDEN_NAMES.includes(segments.at(-1).toLowerCase()) || segments.some((s) => s.toLowerCase() === "node_modules")) {
+    add(entry.path, "a plugin folder holds no package.json, lockfile or node_modules");
+  }
+}
+
+/** The catalog as an object, or null after a finding that says why it is not one. */
+function readCatalog(git, rev, add) {
+  const text = blobAt(git, rev, CATALOG_PATH);
+  if (text === null) {
+    add(CATALOG_PATH, "is missing");
+    return null;
+  }
+  let catalog;
+  try {
+    catalog = JSON.parse(text);
+  } catch (error) {
+    add(CATALOG_PATH, `not JSON: ${firstLine(error.message)}`);
+    return null;
+  }
+  if (!isObject(catalog)) {
+    add(CATALOG_PATH, "is not a JSON object");
+    return null;
+  }
+  return catalog;
+}
+
+/** The catalog outside its plugin list: the top-level keys, the name, the metadata. */
+function checkCatalogHead(catalog, add) {
+  for (const key of Object.keys(catalog)) {
+    if (!TOP_KEYS.includes(key)) add(CATALOG_PATH, `unknown top-level key "${key}"`);
+  }
+  if (catalog.name !== MARKETPLACE_NAME) add(CATALOG_PATH, `name is ${JSON.stringify(catalog.name)}, it must be "${MARKETPLACE_NAME}"`);
+  if (catalog.metadata === undefined) return;
+  if (!isObject(catalog.metadata)) {
+    add(CATALOG_PATH, "metadata is not an object");
+    return;
+  }
+  for (const key of Object.keys(catalog.metadata)) {
+    if (key !== "description") add(CATALOG_PATH, `metadata has the key "${key}"; only description is allowed`);
+  }
+}
+
+/**
+ * One catalog entry on its own: its keys, its name, its source, its description. Returns the name when the entry has
+ * one that is valid and new (it is then in `seen`), and null when the rest of the entry cannot be judged.
+ */
+function checkEntry(entry, at, seen, add) {
+  if (!isObject(entry)) {
+    add(CATALOG_PATH, `${at} is not an object`);
+    return null;
+  }
+  for (const key of Object.keys(entry)) {
+    if (!ENTRY_KEYS.includes(key)) add(CATALOG_PATH, `${at} has the key "${key}"; an entry is exactly name, source, description`);
+  }
+  for (const key of ENTRY_KEYS) {
+    if (!(key in entry)) add(CATALOG_PATH, `${at} has no "${key}"; an entry is exactly name, source, description`);
+  }
+  const name = entry.name;
+  if (typeof name !== "string" || !PLUGIN_NAME.test(name)) {
+    add(CATALOG_PATH, `${at} name ${JSON.stringify(name)} is not lowercase words joined by single hyphens`);
+    return null;
+  }
+  if (seen.has(name)) {
+    add(CATALOG_PATH, `${at} repeats the name "${name}"`);
+    return null;
+  }
+  seen.add(name);
+  // The STRING, exactly: an object source can point anywhere, and `./plugins/<name>/` or `./plugins/../..` are
+  // other spellings that a loader may resolve differently from this check.
+  if (entry.source !== `./plugins/${name}`) add(CATALOG_PATH, `${at} "${name}": source must be the string "./plugins/${name}"`);
+  if (typeof entry.description !== "string") add(CATALOG_PATH, `${at} "${name}": description must be a string`);
+  return name;
+}
+
+/** The manifest of one plugin: it is there, it is an object, its name is the entry's, its version is canonical. */
+function checkManifest({ git, rev, name, files, add, plugins }) {
+  const manifest = manifestPath(name);
+  const text = files.has(manifest) ? blobAt(git, rev, manifest) : null;
+  if (text === null) {
+    add(manifest, "is missing");
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    add(manifest, `not JSON: ${firstLine(error.message)}`);
+    return;
+  }
+  if (!isObject(parsed)) {
+    add(manifest, "is not a JSON object");
+    return;
+  }
+  if (parsed.name !== name) add(manifest, `name is ${JSON.stringify(parsed.name)} but the catalog entry is "${name}"`);
+  if (parts(parsed.version) === null) add(manifest, `version ${JSON.stringify(parsed.version)} is not <major>.<minor>.<patch>, digits only`);
+  else plugins.push({ name, version: parsed.version });
+}
+
+/** The plugin list: every entry, its folder and manifest, and every folder that has no entry. */
+function checkPlugins(catalog, { git, rev, files, folders, add, plugins }) {
+  if (!Array.isArray(catalog.plugins)) {
+    add(CATALOG_PATH, "plugins is not a list");
+    return;
+  }
+  const seen = new Set();
+  catalog.plugins.forEach((entry, i) => {
+    const at = `plugins[${i}]`;
+    const name = checkEntry(entry, at, seen, add);
+    if (name === null) return;
+    if (!folders.has(name)) add(CATALOG_PATH, `${at} "${name}": there is no folder plugins/${name}`);
+    else checkManifest({ git, rev, name, files, add, plugins });
+  });
+  for (const folder of [...folders].sort()) {
+    if (!seen.has(folder)) add(`plugins/${folder}`, "a plugin folder with no catalog entry");
+  }
+}
+
+/**
  * The layout of the commit, as every finding it has, plus the plugins that were read.
  * `release` (optional, a rev or empty) adds one rule: a plugin that release serves cannot vanish.
  */
@@ -95,118 +241,12 @@ export function inspect({ git, rev, release = "" }) {
 
   const entries = listTree(git, rev);
   const files = new Set(entries.map((e) => e.path));
-  const folders = new Set();
-  // Names are judged in lower case: on a case-insensitive disk `Plugins/` IS `plugins/`, and `Package.json` IS package.json.
-  const lookalikes = new Set();
-  for (const entry of entries) {
-    const top = entry.path.split("/")[0];
-    if (top !== "plugins" && top.toLowerCase() === "plugins" && !lookalikes.has(top)) {
-      lookalikes.add(top);
-      add(top, "a top-level entry that is `plugins` in other letters; on a case-insensitive disk it is the plugins folder, and only `plugins` is one");
-    }
-    if (!entry.path.startsWith("plugins/")) continue;
-    if (entry.mode === "120000") add(entry.path, "a symlink (mode 120000); a plugin holds no link");
-    else if (entry.mode === "160000") add(entry.path, "a gitlink (mode 160000); a plugin holds no submodule");
-    const rest = entry.path.slice("plugins/".length);
-    const segments = rest.split("/");
-    if (segments.length === 1) {
-      if (entry.mode !== "160000") add(entry.path, "a file directly under plugins/; every file belongs to a plugin folder");
-      continue;
-    }
-    folders.add(segments[0]);
-    if (FORBIDDEN_NAMES.includes(segments.at(-1).toLowerCase()) || segments.some((s) => s.toLowerCase() === "node_modules")) {
-      add(entry.path, "a plugin folder holds no package.json, lockfile or node_modules");
-    }
-  }
-
-  const text = blobAt(git, rev, CATALOG_PATH);
-  let catalog = null;
-  if (text === null) add(CATALOG_PATH, "is missing");
-  else {
-    try {
-      catalog = JSON.parse(text);
-    } catch (error) {
-      add(CATALOG_PATH, `not JSON: ${firstLine(error.message)}`);
-    }
-  }
-  if (catalog !== null && !isObject(catalog)) {
-    add(CATALOG_PATH, "is not a JSON object");
-    catalog = null;
-  }
-
+  const folders = checkTree(entries, add);
+  const catalog = readCatalog(git, rev, add);
   if (catalog !== null) {
-    for (const key of Object.keys(catalog)) {
-      if (!TOP_KEYS.includes(key)) add(CATALOG_PATH, `unknown top-level key "${key}"`);
-    }
-    if (catalog.name !== MARKETPLACE_NAME) add(CATALOG_PATH, `name is ${JSON.stringify(catalog.name)}, it must be "${MARKETPLACE_NAME}"`);
-    if (catalog.metadata !== undefined) {
-      if (!isObject(catalog.metadata)) add(CATALOG_PATH, "metadata is not an object");
-      else {
-        for (const key of Object.keys(catalog.metadata)) {
-          if (key !== "description") add(CATALOG_PATH, `metadata has the key "${key}"; only description is allowed`);
-        }
-      }
-    }
-    if (!Array.isArray(catalog.plugins)) add(CATALOG_PATH, "plugins is not a list");
-    else {
-      const seen = new Set();
-      catalog.plugins.forEach((entry, i) => {
-        const at = `plugins[${i}]`;
-        if (!isObject(entry)) {
-          add(CATALOG_PATH, `${at} is not an object`);
-          return;
-        }
-        for (const key of Object.keys(entry)) {
-          if (!ENTRY_KEYS.includes(key)) add(CATALOG_PATH, `${at} has the key "${key}"; an entry is exactly name, source, description`);
-        }
-        for (const key of ENTRY_KEYS) {
-          if (!(key in entry)) add(CATALOG_PATH, `${at} has no "${key}"; an entry is exactly name, source, description`);
-        }
-        const name = entry.name;
-        if (typeof name !== "string" || !PLUGIN_NAME.test(name)) {
-          add(CATALOG_PATH, `${at} name ${JSON.stringify(name)} is not lowercase words joined by single hyphens`);
-          return;
-        }
-        if (seen.has(name)) {
-          add(CATALOG_PATH, `${at} repeats the name "${name}"`);
-          return;
-        }
-        seen.add(name);
-        // The STRING, exactly: an object source can point anywhere, and `./plugins/<name>/` or `./plugins/../..` are
-        // other spellings that a loader may resolve differently from this check.
-        if (entry.source !== `./plugins/${name}`) add(CATALOG_PATH, `${at} "${name}": source must be the string "./plugins/${name}"`);
-        if (typeof entry.description !== "string") add(CATALOG_PATH, `${at} "${name}": description must be a string`);
-        if (!folders.has(name)) {
-          add(CATALOG_PATH, `${at} "${name}": there is no folder plugins/${name}`);
-          return;
-        }
-        const manifest = manifestPath(name);
-        const manifestText = files.has(manifest) ? blobAt(git, rev, manifest) : null;
-        if (manifestText === null) {
-          add(manifest, "is missing");
-          return;
-        }
-        let parsed;
-        try {
-          parsed = JSON.parse(manifestText);
-        } catch (error) {
-          add(manifest, `not JSON: ${firstLine(error.message)}`);
-          return;
-        }
-        if (!isObject(parsed)) {
-          add(manifest, "is not a JSON object");
-          return;
-        }
-        if (parsed.name !== name) add(manifest, `name is ${JSON.stringify(parsed.name)} but the catalog entry is "${name}"`);
-        if (parts(parsed.version) === null) add(manifest, `version ${JSON.stringify(parsed.version)} is not <major>.<minor>.<patch>, digits only`);
-        else plugins.push({ name, version: parsed.version });
-      });
-      for (const folder of [...folders].sort()) {
-        if (!seen.has(folder)) add(`plugins/${folder}`, "a plugin folder with no catalog entry");
-      }
-    }
+    checkCatalogHead(catalog, add);
+    checkPlugins(catalog, { git, rev, files, folders, add, plugins });
   }
-
   if (release !== "") {
     for (const folder of pluginFolders(git, release)) {
       if (!folders.has(folder)) add(`plugins/${folder}`, "release has this plugin and this commit has not");

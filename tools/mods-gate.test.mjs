@@ -47,6 +47,8 @@ const LAYOUT_CASES = [
   ["an entry with no folder", { [MARKET]: CATALOG([CAT_ENTRY("agent-models"), CAT_ENTRY("ghost")]) }, [/marketplace\.json: plugins\[1\] "ghost": there is no folder plugins\/ghost/]],
   ["two entries of one name", { [MARKET]: CATALOG([CAT_ENTRY("agent-models"), CAT_ENTRY("agent-models")]) }, [/marketplace\.json: plugins\[1\] repeats the name "agent-models"/]],
   ["unparsable catalog JSON", { [MARKET]: "{ nope" }, [/marketplace\.json: not JSON/]],
+  ["a catalog that is the JSON value null", { [MARKET]: "null\n" }, [/marketplace\.json: is not a JSON object/]],
+  ["a catalog that is a JSON list", { [MARKET]: "[]\n" }, [/marketplace\.json: is not a JSON object/]],
   ["unparsable manifest JSON", { "plugins/agent-models/.claude-plugin/plugin.json": "{ nope" }, [/plugins\/agent-models\/\.claude-plugin\/plugin\.json: not JSON/]],
 ];
 
