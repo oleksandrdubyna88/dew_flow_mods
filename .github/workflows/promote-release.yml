@@ -10,6 +10,7 @@ name: promote-release
 #   verdict  no environment, no secret. A dry run of the whole judgement: main, the green `ci` push run of that exact
 #            sha, forward only, the layout, the version, the tag. Its output is the step summary, so the compare URL,
 #            the plugins that changed and the commit the gate runs at are on screen BEFORE anybody is asked to approve.
+#            Its output `moves` is false when release is already the sha: the push job is then skipped, no approval asked.
 #   push     `needs: verdict`, environment `release`: the owner approves here (required reviewer, deployment branch
 #            main only). The deploy key is read by this job and by nothing else: the checkout uses it, the tool pushes
 #            `<sha>:refs/heads/release` and the tag in ONE atomic push, and the judgement runs AGAIN because main, ci and
@@ -47,6 +48,10 @@ jobs:
     name: promote · verdict
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      # `true` only when the verdict passed AND release is not already at the sha. An absent or false output skips the
+      # push job, so a no-op promotion asks nobody for an approval and never reaches the key.
+      moves: ${{ steps.verdict.outputs.moves }}
     steps:
       - name: The gate that judges must be main's gate
         if: github.ref != 'refs/heads/main'
@@ -73,6 +78,7 @@ jobs:
           node-version: 22
 
       - name: Verdict (a dry run, nothing is pushed)
+        id: verdict
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -84,6 +90,16 @@ jobs:
           code=0
           node tools/promote-release.mjs "$SHA" --dry-run > "$RUNNER_TEMP/verdict.txt" 2>&1 || code=$?
           cat "$RUNNER_TEMP/verdict.txt"
+          # A sha that release already points at passes the judgement and moves nothing: the tool says so in one line.
+          # Only a passing verdict can be a no-op (a refusal prints back text the dispatcher typed, and exits non-zero).
+          moves=false
+          if [ "$code" -eq 0 ]; then
+            moves=true
+            if grep -Eq '^promote-release: release is already [0-9a-f]{40} .* nothing to move' "$RUNNER_TEMP/verdict.txt"; then
+              moves=false
+            fi
+          fi
+          echo "moves=$moves" >> "$GITHUB_OUTPUT"
           # The approver reads this page to decide. What the dispatcher typed (the reason, and a sha that failed the
           # tool's own check, which the tool prints back) is not trusted: the verdict goes FIRST, and every typed word
           # lands inside a fenced block with <, > and backticks removed and newlines folded to spaces, so it can open
@@ -96,7 +112,9 @@ jobs:
             tr '`' "'" < "$RUNNER_TEMP/verdict.txt"
             echo '```'
             echo
-            if [ "$code" -eq 0 ]; then
+            if [ "$code" -eq 0 ] && [ "$moves" = false ]; then
+              echo "Exit code 0. release is already this commit: nothing moved, nothing was pushed, and no approval will be asked. The push job is skipped."
+            elif [ "$code" -eq 0 ]; then
               echo "Exit code 0. Nothing was pushed. The next job waits for the owner's approval."
             else
               echo "Exit code $code. Nothing was pushed. The push job will not run."
@@ -114,7 +132,7 @@ jobs:
   push:
     name: promote · push
     needs: verdict
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.verdict.outputs.moves == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release

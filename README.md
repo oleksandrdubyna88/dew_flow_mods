@@ -28,6 +28,7 @@ gh workflow run promote-release.yml --repo oleksandrdubyna88/dew_flow_mods --ref
 ```
 
 The job `verdict` is a dry run: it prints the compare URL, the plugins that changed and the commit the gate runs at.
+When `release` is already the sha, the verdict says so, the job `push` is skipped, and no approval is asked.
 The job `push` is set to wait for the owner's approval in the `release` environment (requested, not yet observed), refuses to
 run when its commit is not the current tip of `main`, then pushes `release` and the tag `<plugin>--v<version>` in one
 atomic push with the deploy key. The judgement ([tools/promote-release.mjs](tools/promote-release.mjs),

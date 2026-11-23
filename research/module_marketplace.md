@@ -53,7 +53,7 @@ tool of the same name in dew_flow_conventions `69adc1e`, with four differences) 
 The push is one `git push --atomic origin <sha>:refs/heads/release <sha>:refs/tags/<plugin>--v<version>`, a lightweight
 tag, with no `--force`; the tool then reads every pushed ref back. A promotion that changes nothing under `plugins/`
 creates no tag (`plugins: none changed`). `--dry-run` judges everything and prints the compare URL, the plugins line and
-which commit the gate runs at. `node tools/mods-gate.mjs [rev]` is the layout gate alone, a step of the `mods · tools` job.
+which commit the gate runs at. When `release` already is the sha, the step `verdict` sets its output `moves` to false: the job `push` is skipped (no approval is asked) and the summary says nothing moved. `node tools/mods-gate.mjs [rev]` is the layout gate alone, a step of the `mods · tools` job.
 
 **Settings as data** (`.github/rulesets/*.json`, `.github/settings.json`, read back by `.github/scripts/repo-settings.mjs`).
 Everything in this part is what the data REQUESTS of GitHub. Nothing has been applied or observed yet (the observations

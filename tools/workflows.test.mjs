@@ -52,7 +52,7 @@ describe('workflow structure', () => {
     assert.equal(guard.if, "github.ref != 'refs/heads/main'", 'the first step of verdict is the guard');
     assert.match(guard.run, /\bexit 1\b/, 'the guard fails');
     assert.deepEqual([push.needs].flat(), ['verdict']);
-    assert.equal(push.if, "github.ref == 'refs/heads/main'");
+    assert.match(push.if, /^github\.ref == 'refs\/heads\/main' && /, 'the push job runs on main, and only when the verdict says something moves');
     for (const [key, job] of [['verdict', verdict], ['push', push]]) {
       const checkouts = stepsOf(job).filter((s) => String(s.uses ?? '').startsWith('actions/checkout@'));
       assert.equal(checkouts.length, 1, `${key} has one checkout`);
@@ -127,15 +127,16 @@ function runStep(t, jobKey, stepName, { env = {}, node = '', gh = '' } = {}) {
   fs.writeFileSync(path.join(bin, 'node'), `#!/bin/sh\n${node}\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\n${gh}\n`, { mode: 0o755 });
   const summary = path.join(dir, 'summary.md');
+  const output = path.join(dir, 'github-output');
   const script = path.join(dir, 'step.sh');
   fs.writeFileSync(script, step.run);
   const result = spawnSync('bash', ['-e', script], {
     cwd: dir,
     encoding: 'utf8',
     timeout: 20000,
-    env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, RUNNER_TEMP: dir, GITHUB_STEP_SUMMARY: summary, ...env },
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, RUNNER_TEMP: dir, GITHUB_STEP_SUMMARY: summary, GITHUB_OUTPUT: output, ...env },
   });
-  return { code: result.status, out: `${result.stdout}${result.stderr}`, summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : '' };
+  return { code: result.status, out: `${result.stdout}${result.stderr}`, summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : '', output: fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '' };
 }
 
 /** The markdown outside fenced blocks: the part a renderer interprets. */
@@ -195,6 +196,41 @@ describe('the step summary is written for an approver', () => {
     assert.equal(r.code, 0, r.out);
     assert.equal(fenceLines(r.summary).length, 2, r.summary);
     assert.doesNotMatch(outsideFences(r.summary), /[<>]/, r.summary);
+  });
+});
+
+describe('a promotion that moves nothing asks for no approval', () => {
+  const SHA = 'a'.repeat(40);
+  const ALREADY = `echo "promote-release: release is already ${SHA} — nothing to move, and nothing pushed."`;
+
+  it('Y8: the verdict job exposes the result of its step as the output \'moves\', and the push job needs it to be true', () => {
+    const { verdict, push } = PROMOTE.doc.jobs;
+    const step = stepsOf(verdict).find((s) => s.name === VERDICT_STEP);
+    assert.ok(step.id, 'the verdict step has an id');
+    assert.equal(verdict.outputs.moves, '${{ steps.' + step.id + '.outputs.moves }}');
+    assert.match(push.if, /needs\.verdict\.outputs\.moves == 'true'/, 'an absent or false output skips the job that holds the key');
+    // The step reads the tool's own words; the tool and the step must keep agreeing on them.
+    const tool = fs.readFileSync(path.join(DIR, '..', '..', 'tools', 'promote-release.mjs'), 'utf8');
+    assert.ok(tool.includes('release is already ${decision.sha} — nothing to move'), 'the tool still says what the workflow looks for');
+  });
+
+  it('Y8: a sha that is already at release is a no-op: moves=false, and the summary says nothing moved and no approval is asked', (t) => {
+    const r = runStep(t, 'verdict', VERDICT_STEP, { env: { SHA, REASON: 'again' }, node: ALREADY });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.output, /^moves=false$/m);
+    assert.match(r.summary, /release is already this commit: nothing moved, nothing was pushed, and no approval will be asked\. The push job is skipped\./);
+    assert.doesNotMatch(r.summary, /waits for the owner/);
+  });
+
+  it('Y8: a verdict that moves release says moves=true; a refusal never does, even one that prints the no-op words', (t) => {
+    const moves = runStep(t, 'verdict', VERDICT_STEP, { env: { SHA, REASON: 'r' }, node: 'echo "promote-release: DRY RUN — would push"' });
+    assert.equal(moves.code, 0, moves.out);
+    assert.match(moves.output, /^moves=true$/m);
+    assert.match(moves.summary, /The next job waits for the owner's approval\./);
+    const refused = runStep(t, 'verdict', VERDICT_STEP, { env: { SHA, REASON: 'r' }, node: `${ALREADY}; exit 1` });
+    assert.equal(refused.code, 1, refused.out);
+    assert.match(refused.output, /^moves=false$/m);
+    assert.match(refused.summary, /The push job will not run\./);
   });
 });
 
