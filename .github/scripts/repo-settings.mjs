@@ -163,6 +163,30 @@ async function get(gh, part, endpoint) {
   }
 }
 
+/** A page holds at most this many; the listing endpoints answer 30 unless asked. */
+const PER_PAGE = 100;
+/** A ceiling on paging, so an answer that keeps claiming more cannot spin here for ever (1000 secrets). */
+const MAX_PAGES = 10;
+
+/**
+ * The names of every secret of a listing (`{total_count, secrets: [{name}]}`), read page by page. The first page is not
+ * the listing: a match on "the key is not a repository secret" is only as good as the pages that were read. A listing
+ * with no `total_count`, a page empty before the count is reached, or more pages than the ceiling is unreadable.
+ */
+async function secretNames(gh, part, endpoint) {
+  const names = [];
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const answer = await get(gh, part, `${endpoint}?per_page=${PER_PAGE}&page=${page}`);
+    if (!Number.isSafeInteger(answer?.total_count) || answer.total_count < 0 || !Array.isArray(answer.secrets)) {
+      throw new Unseen(part, 'could not look — the answer has no readable total_count and secrets');
+    }
+    names.push(...answer.secrets.map((s) => s.name));
+    if (names.length >= answer.total_count) return names;
+    if (answer.secrets.length === 0) throw new Unseen(part, `could not look — the listing ends at ${names.length} of ${answer.total_count} secrets, short of the count GitHub gave`);
+  }
+  throw new Unseen(part, `could not look — more than ${MAX_PAGES} pages of secrets`);
+}
+
 /** A ruleset reduced to what the data speaks for: GitHub's answer adds ids, urls and `source`. */
 export function normaliseRuleset(body) {
   const params = (rule) => {
@@ -258,12 +282,10 @@ async function readEnvironment({ data, gh, repo }) {
   if (!same(livePolicies, [...want.branch_policies].sort((a, b) => (a.name < b.name ? -1 : 1)))) {
     drift.push(`environment ${name}: branch policies — data ${JSON.stringify(want.branch_policies)}, live ${JSON.stringify(livePolicies)}`);
   }
-  const secrets = await get(gh, 'environment secrets', `repos/${repo}/environments/${name}/secrets`);
-  const liveSecrets = sorted((secrets.secrets ?? []).map((s) => s.name));
+  const liveSecrets = sorted(await secretNames(gh, 'environment secrets', `repos/${repo}/environments/${name}/secrets`));
   if (!same(liveSecrets, sorted(want.secrets))) drift.push(`environment ${name}: secrets — data ${JSON.stringify(sorted(want.secrets))}, live ${JSON.stringify(liveSecrets)}`);
-  const repoSecrets = await get(gh, 'repository secrets', `repos/${repo}/actions/secrets`);
-  for (const secret of repoSecrets.secrets ?? []) {
-    if (want.secrets.includes(secret.name)) drift.push(`repository secret ${secret.name}: it exists as a repository secret too; the deploy key lives in the environment only`);
+  for (const secret of await secretNames(gh, 'repository secrets', `repos/${repo}/actions/secrets`)) {
+    if (want.secrets.includes(secret)) drift.push(`repository secret ${secret}: it exists as a repository secret too; the deploy key lives in the environment only`);
   }
   return { part: 'environment', drift, notes };
 }

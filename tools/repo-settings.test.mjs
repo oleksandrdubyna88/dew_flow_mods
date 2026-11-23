@@ -52,15 +52,16 @@ function liveFrom(d) {
   return live;
 }
 
-/** A scripted gh. A GET answers from `live` (an Error is thrown, an absent endpoint is a 404); every call is recorded. */
+/** A scripted gh. A GET answers from `live` (an Error is thrown, an absent endpoint is a 404, a function gets the query and answers a page); every call is recorded. */
 function fakeGh(live) {
   const calls = [];
   const gh = async (args, input) => {
     calls.push({ args, input });
     const writing = args.includes('-X');
     if (writing) return '{}';
-    const endpoint = args[1].split('?')[0];
-    const answer = live[endpoint];
+    const [endpoint, query = ''] = args[1].split('?');
+    const found = live[endpoint];
+    const answer = typeof found === 'function' ? found(new URLSearchParams(query)) : found;
     if (answer === undefined) throw new Error('gh: Not Found (HTTP 404)');
     if (answer instanceof Error) throw answer;
     return JSON.stringify(answer);
@@ -221,6 +222,38 @@ describe('D3 the environment', () => {
     const r = await check(d, live);
     assert.equal(r.code, EXIT.MATCH, r.lines.join('\n'));
     assert.match(r.notes.join('\n'), /can_admins_bypass is not shown by the API; the owner sets it by hand/);
+  });
+});
+
+describe('D3 secrets are read page by page', () => {
+  const names = (from, count) => Array.from({ length: count }, (_, i) => ({ name: `S${from + i}` }));
+  /** A listing of `total` secrets, 100 to a page; `hidden` is what the LAST page holds in place of the plain ones. */
+  const paged = (total, last = []) => (query) => {
+    const page = Number(query.get('page') ?? 1);
+    const on = page === 1 ? names(0, Math.min(100, total)) : page === 2 ? [...names(100, Math.max(0, total - 101)), ...last] : [];
+    return { total_count: total, secrets: on };
+  };
+
+  it('the key as a repository secret on the SECOND page is found: the first page is not the listing', async () => {
+    const d = data();
+    const live = liveFrom(d);
+    live[`repos/${REPO}/actions/secrets`] = paged(101, [{ name: 'RELEASE_DEPLOY_KEY' }]);
+    const r = await check(d, live);
+    assert.equal(r.code, EXIT.DRIFT, r.lines.join('\n'));
+    assert.match(r.lines.join('\n'), /repository secret RELEASE_DEPLOY_KEY: it exists as a repository secret too/);
+  });
+
+  it('a long listing without the key matches; a listing that ends short of its own count is exit 3, never a match', async () => {
+    const d = data();
+    const live = liveFrom(d);
+    live[`repos/${REPO}/actions/secrets`] = (query) => ({ total_count: 150, secrets: Number(query.get('page') ?? 1) <= 2 ? names(0, 75) : [] });
+    assert.equal((await check(d, live)).code, EXIT.MATCH);
+    live[`repos/${REPO}/actions/secrets`] = (query) => ({ total_count: 150, secrets: Number(query.get('page') ?? 1) === 1 ? names(0, 100) : [] });
+    const short = await check(d, live);
+    assert.equal(short.code, EXIT.UNSEEN, short.lines.join('\n'));
+    assert.match(short.lines.join('\n'), /repository secrets: could not look — .*short of the count/);
+    live[`repos/${REPO}/actions/secrets`] = { secrets: [] };
+    assert.equal((await check(d, live)).code, EXIT.UNSEEN, 'no total_count is no listing');
   });
 });
 
