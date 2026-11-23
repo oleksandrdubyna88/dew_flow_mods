@@ -1,0 +1,138 @@
+name: promote-release
+
+# `release` is the ref every machine's marketplace entry follows, and what is on it runs in every Claude Code session
+# with the owner's permissions. This file is the ONLY way it moves: a ruleset (.github/rulesets/release-moves.json)
+# lets nobody create or update it except the deploy key that lives in the `release` environment, and the same key alone
+# may create a version tag (tags-create.json). Nobody can rewind or delete either (release-fixed.json, tags-fixed.json).
+#
+# Two jobs, and the order is the design:
+#   verdict  no environment, no secret. A dry run of the whole judgement: main, the green `ci` push run of that exact
+#            sha, forward only, the layout, the version, the tag. Its output is the step summary, so the compare URL,
+#            the plugins that changed and the commit the gate runs at are on screen BEFORE anybody is asked to approve.
+#   push     `needs: verdict`, environment `release`: the owner approves here (required reviewer, deployment branch
+#            main only). The deploy key is read by this job and by nothing else: the checkout uses it, the tool pushes
+#            `<sha>:refs/heads/release` and the tag in ONE atomic push, and the judgement runs AGAIN because main, ci and
+#            release can change while the run waits for the click. This job runs no `npm`: the tool has no dependency,
+#            so nothing unreviewed runs beside the key.
+#
+# Dispatch it against `main` only. Both jobs refuse any other ref: the gate that judges a promotion must be the
+# reviewed one on main, not whatever a branch carries. Both check out the dispatched commit (`github.sha`), never a
+# ref an input names, and the judged commit may be older than the gate that judges it (the verdict says which).
+#
+# There is no rewind input. Rollback is a FORWARD release: revert the content on main and promote the new commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The reviewed commit on main to publish (full 40-character sha)"
+        required: true
+      reason:
+        description: "What this release contains, in one line, for the run summary"
+        required: true
+
+# One promotion at a time. Two concurrent runs could each judge a different sha as a forward move from the release
+# they both read before either pushed.
+concurrency:
+  group: promote-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verdict:
+    name: promote · verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: The gate that judges must be main's gate
+        if: github.ref != 'refs/heads/main'
+        env:
+          # Through the environment, never as text in the script: an expression written inline is expanded by Actions
+          # before the shell parses the line.
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          echo "promote-release: refusing to run from $DISPATCH_REF." >&2
+          echo "  Dispatch this workflow against main: the gate that judges a promotion must be the" >&2
+          echo "  reviewed one, not whatever a branch happens to carry." >&2
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          # The tool asks whether the sha is an ancestor of main and how far release is behind it; both are
+          # questions a shallow clone cannot answer, and it refuses one outright.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Verdict (a dry run, nothing is pushed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # The inputs reach the shell as ENVIRONMENT, never as text substituted into this script: `${{ inputs.sha }}`
+          # written inline would run a value like `$(curl …)` on the runner before the tool's 40-hex check sees it.
+          SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          code=0
+          node tools/promote-release.mjs "$SHA" --dry-run > "$RUNNER_TEMP/verdict.txt" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/verdict.txt"
+          {
+            echo "## verdict for \`$SHA\`"
+            echo
+            echo "$REASON"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/verdict.txt"
+            echo '```'
+            echo
+            echo "Exit code $code. Nothing was pushed. The next job waits for the owner's approval."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
+  push:
+    name: promote · push
+    needs: verdict
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # THE ONE CHECKOUT IN THIS REPOSITORY THAT HOLDS A KEY. The deploy key is written for the push below and
+          # removed when the job ends; the repository's default token stays read-only.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
+        run: node tools/promote-release.mjs "$SHA"
+
+      - name: Say what moved
+        if: success()
+        env:
+          SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## release → \`$SHA\`"
+            echo
+            echo "$REASON"
+            echo
+            echo "Machines pick this up at their next marketplace update; nothing on a machine changes before that."
+          } >> "$GITHUB_STEP_SUMMARY"
