@@ -8,13 +8,17 @@
  *   --commit       default: the commit named below
  *
  * Two proofs, both from git, with no list of files typed here:
- *   1. every file of mods/agent-models at the commit is in the folder with the same git blob id, and the folder holds
- *      no other file (a changed test or tsconfig is red too);
+ *   1. `git ls-tree -r <ref> plugins/agent-models` of this repository equals `git ls-tree -r <commit> mods/agent-models`
+ *      of the conventions, entry by entry: the same mode and the same blob id, no other entry. A symlink, a mode change,
+ *      a changed test or tsconfig, or a file force-added under .claude-plugin/types/ is red. <ref> is HEAD; on disk the
+ *      folder must equal that tree (the engine's own .claude-plugin/types/ is the one folder not read from disk);
  *   2. the files that are the keys of the "1.6.0" row of tools/agent-models-pins.json at the commit (the files the old
- *      installer copies) have the sha256 of that row.
+ *      installer copies) have the sha256 of that row. A key that is in neither tree is red, not skipped; the line
+ *      printed says how many keys were hashed.
  *
  * When plugin.json names a version above 1.6.0 the folder has legitimately moved on, so the same two proofs are made
- * on the tree of the tag agent-models--v1.6.0 of this repository instead; a missing tag is red.
+ * on the tree of the tag agent-models--v1.6.0 of this repository instead; a missing tag is red, and the finding names
+ * the `git fetch` that brings it (CI runs it in the tools job).
  *
  * Exit 0 with one line on success; exit 1 with every finding named. A commit that cannot be read, or a missing row, is
  * red, never a skip. Only node: builtins and git.
@@ -45,26 +49,28 @@ function git(repo, args, { allowFail = false } = {}) {
   return r.status === 0 ? r.stdout : null;
 }
 
-/** path -> blob id of every file under `dir` at `rev` in `repo`. */
-function treeBlobs(repo, rev, dir) {
+/** path -> { mode, id } of every entry under `dir` at `rev` in `repo` (a symlink is an entry with mode 120000). */
+function treeEntries(repo, rev, dir) {
   const out = git(repo, ['ls-tree', '-r', '-z', rev, '--', dir], { allowFail: true });
   if (out === null) return null;
   const map = new Map();
   for (const record of String(out).split('\0').filter(Boolean)) {
     const tab = record.indexOf('\t');
-    const [, type, id] = record.slice(0, tab).split(' ');
-    if (type === 'blob') map.set(record.slice(tab + 1).slice(dir.length + 1), id);
+    const [mode, type, id] = record.slice(0, tab).split(' ');
+    if (type === 'blob') map.set(record.slice(tab + 1).slice(dir.length + 1), { mode, id });
   }
   return map;
 }
 
-/** path -> blob id of every file on disk under `dir`, and a reader for the bytes. */
+/** path -> blob id of every file on disk under `dir`; a symlink is marked, never followed. */
 function diskBlobs(dir) {
   const map = new Map();
   const walk = (current, prefix) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const rel = `${prefix}${entry.name}`;
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        map.set(rel, 'symlink');
+      } else if (entry.isDirectory()) {
         if (`${rel}/` !== GENERATED) walk(path.join(current, entry.name), `${rel}/`);
       } else {
         map.set(rel, blobId(fs.readFileSync(path.join(current, entry.name))));
@@ -106,13 +112,11 @@ export function proveCopy({ root, conventions, commit }) {
     return { ok: false, findings: [`${PINS} at ${full} has no ${PROVEN_VERSION} row`] };
   }
 
-  const expected = treeBlobs(conventions, full, SOURCE);
+  const expected = treeEntries(conventions, full, SOURCE);
   if (!expected || expected.size === 0) return { ok: false, findings: [`${SOURCE} is empty or missing at ${full}`] };
 
-  // What is compared: the folder on disk, or the tree of the tag when the version has moved above the proven one.
-  let actual;
-  let read;
-  let what = FOLDER;
+  // What is compared: the tree of HEAD (and the folder on disk must equal it), or the tree of the tag when the
+  // version has moved above the proven one.
   const manifestPath = path.join(root, FOLDER, '.claude-plugin', 'plugin.json');
   let version;
   try {
@@ -120,28 +124,50 @@ export function proveCopy({ root, conventions, commit }) {
   } catch (error) {
     return { ok: false, findings: [`the plugin manifest of ${FOLDER} cannot be read: ${error.message}`] };
   }
-  if (isAbove(version, PROVEN_VERSION)) {
-    what = `tag ${TAG}`;
-    actual = treeBlobs(root, `refs/tags/${TAG}`, FOLDER);
-    if (!actual || actual.size === 0) {
-      return { ok: false, findings: [`plugin.json is ${version}, above ${PROVEN_VERSION}, so ${FOLDER} at the tag ${TAG} is the copy to prove; the tag is absent`] };
-    }
-    read = (rel) => git(root, ['show', `refs/tags/${TAG}:${FOLDER}/${rel}`]);
-  } else {
-    actual = diskBlobs(path.join(root, FOLDER));
-    read = (rel) => fs.readFileSync(path.join(root, FOLDER, rel));
+  const onTag = isAbove(version, PROVEN_VERSION);
+  const ref = onTag ? `refs/tags/${TAG}` : 'HEAD';
+  const what = onTag ? `tag ${TAG}` : `${FOLDER} at HEAD`;
+  const actual = treeEntries(root, ref, FOLDER);
+  if (onTag && (!actual || actual.size === 0)) {
+    return {
+      ok: false,
+      findings: [`plugin.json is ${version}, above ${PROVEN_VERSION}, so ${FOLDER} at the tag ${TAG} is the copy to prove; the tag is absent here: fetch it first (git fetch --depth 1 origin "refs/tags/${TAG}:refs/tags/${TAG}")`],
+    };
   }
+  if (!actual || actual.size === 0) return { ok: false, findings: [`${FOLDER} is empty or missing at ${ref} of ${root}`] };
+  const read = (rel) => git(root, ['show', `${ref}:${FOLDER}/${rel}`]);
 
-  for (const [rel, id] of expected) {
-    if (!actual.has(rel)) findings.push(`missing from ${what}: ${rel}`);
-    else if (actual.get(rel) !== id) findings.push(`differs from ${SOURCE}/${rel} at ${full}: ${rel} (blob ${actual.get(rel)}, expected ${id})`);
+  for (const [rel, want] of expected) {
+    const got = actual.get(rel);
+    if (!got) findings.push(`missing from ${what}: ${rel}`);
+    else if (got.mode !== want.mode) findings.push(`mode ${got.mode} in ${what}, ${want.mode} in ${SOURCE}/${rel} at ${full}: ${rel}`);
+    else if (got.id !== want.id) findings.push(`differs from ${SOURCE}/${rel} at ${full}: ${rel} (blob ${got.id}, expected ${want.id})`);
   }
   for (const rel of actual.keys()) {
     if (!expected.has(rel)) findings.push(`extra in ${what}, not in ${SOURCE} at ${full}: ${rel}`);
   }
 
+  // The folder on disk is what the host loads: it must be what git holds at HEAD.
+  if (!onTag) {
+    const disk = diskBlobs(path.join(root, FOLDER));
+    for (const [rel, id] of disk) {
+      const held = actual.get(rel);
+      if (!held) findings.push(`on disk, not in ${what}: ${rel}`);
+      else if (held.id !== id) findings.push(`on disk it differs from ${what}: ${rel} (blob ${id}, HEAD ${held.id})`);
+    }
+    for (const rel of actual.keys()) {
+      if (!disk.has(rel)) findings.push(`in ${what}, missing on disk: ${rel}`);
+    }
+  }
+
+  let hashed = 0;
   for (const [rel, want] of Object.entries(row)) {
+    if (!expected.has(rel)) {
+      findings.push(`row key ${rel} of the ${PROVEN_VERSION} row is in neither tree: not in ${SOURCE} at ${full}, so it is not a file of the mod`);
+      continue;
+    }
     if (!actual.has(rel)) continue; // already named as missing above
+    hashed += 1;
     const got = sha256(read(rel));
     if (got !== want) findings.push(`sha256 of ${rel} is ${got}, the ${PROVEN_VERSION} row has ${want}`);
   }
@@ -150,7 +176,7 @@ export function proveCopy({ root, conventions, commit }) {
   return {
     ok: true,
     findings,
-    line: `copy-proof: ${what} equals ${SOURCE} of dew_flow_conventions ${full}: ${Object.keys(row).length} sha256 = ${PROVEN_VERSION} row, ${expected.size} blobs equal`,
+    line: `copy-proof: ${what} equals ${SOURCE} of dew_flow_conventions ${full}: ${hashed} sha256 hashed = ${PROVEN_VERSION} row (${Object.keys(row).length} keys), ${expected.size} entries equal (mode and blob)`,
   };
 }
 

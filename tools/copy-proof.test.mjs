@@ -49,13 +49,13 @@ function write(root, files) {
 }
 
 /** The conventions stand-in: mods/agent-models at one commit and the pins table with a 1.6.0 row. */
-function makeConventions({ withRow = true } = {}) {
+function makeConventions({ withRow = true, extraRowFiles = {}, rowPatch = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-conv-'));
   temps.push(dir);
   git(dir, 'init', '-q', '-b', 'main');
-  const files = baseFiles();
+  const files = { ...baseFiles(), ...extraRowFiles };
   write(dir, Object.fromEntries(Object.entries(files).map(([f, t]) => [`mods/agent-models/${f}`, t])));
-  const row = Object.fromEntries(NINE.map((f) => [f, sha256(files[f])]));
+  const row = { ...Object.fromEntries([...NINE, ...Object.keys(extraRowFiles)].map((f) => [f, sha256(files[f])])), ...rowPatch };
   const table = withRow ? { '1.5.0': { 'hooks/hooks.json': 'x' }, '1.6.0': row } : { '1.5.0': { 'hooks/hooks.json': 'x' } };
   write(dir, { 'tools/agent-models-pins.json': `${JSON.stringify(table, null, 2)}\n` });
   git(dir, 'add', '-A');
@@ -87,7 +87,7 @@ describe('C1 copy-proof', () => {
     const r = proof(mods, conv);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, new RegExp(conv.commit));
-    assert.match(r.out, new RegExp(`9 sha256 = 1\\.6\\.0 row, ${blobs} blobs equal`));
+    assert.match(r.out, new RegExp(`9 sha256 hashed = 1\\.6\\.0 row \\(9 keys\\), ${blobs} entries equal`));
   });
 
   it('C1b: one byte changed in an installed file is red, naming the file and both sha256', () => {
@@ -147,6 +147,7 @@ describe('C1 copy-proof', () => {
     const r = proof(makeMods(files), conv);
     assert.equal(r.code, 1, r.out);
     assert.match(r.out, /agent-models--v1\.6\.0/);
+    assert.match(r.out, /git fetch --depth 1 origin "?refs\/tags\/agent-models--v1\.6\.0/);
   });
 
   it('C1e: a tag whose tree differs from the conventions commit is red', () => {
@@ -176,11 +177,116 @@ describe('C1 copy-proof', () => {
   });
 
   it('C1: the mod files are read from the row keys at the commit, not from a list in the tool', () => {
-    // A tenth file in the row: the tool must demand it. A hard-coded list of nine would skip it.
-    const conv = makeConventions();
+    // A tenth key in the row: the tool must demand it. A hard-coded list of nine would skip it.
+    const tenth = { 'hooks/tenth.tsx': 'export const g = 7;\n' };
+    const conv = makeConventions({ extraRowFiles: tenth });
     const table = JSON.parse(git(conv.dir, 'show', `${conv.commit}:tools/agent-models-pins.json`));
-    assert.equal(Object.keys(table['1.6.0']).length, 9);
+    assert.equal(Object.keys(table['1.6.0']).length, 10);
+    const ok = proof(makeMods({ ...baseFiles(), ...tenth }), conv);
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(ok.out, /10 sha256 hashed = 1\.6\.0 row/);
+    // The blobs equal, only the tenth row hash is wrong: only a row-driven check sees it.
+    const wrong = makeConventions({ extraRowFiles: tenth, rowPatch: { 'hooks/tenth.tsx': sha256('not the file\n') } });
+    const red = proof(makeMods({ ...baseFiles(), ...tenth }), wrong);
+    assert.equal(red.code, 1, red.out);
+    assert.match(red.out, /sha256 of hooks\/tenth\.tsx/);
     const source = fs.readFileSync(TOOL, 'utf8');
     for (const f of NINE) assert.ok(!source.includes(f), `${f} is listed in the tool`);
+  });
+
+  it('C1: a row key that is in neither tree is a finding, not a skip', () => {
+    const conv = makeConventions({ rowPatch: { 'mods/agent-models/hooks/pins.tsx': sha256('export const f = 6;\n') } });
+    const r = proof(makeMods(), conv);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /mods\/agent-models\/hooks\/pins\.tsx/);
+    assert.match(r.out, /neither/);
+  });
+
+  it('C1: the line counts the keys it hashed, not the keys of the row', () => {
+    const conv = makeConventions();
+    const r = proof(makeMods(), conv);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /9 sha256 hashed/);
+  });
+
+  it('C1g: a mode change with the same blob is red, naming both modes', () => {
+    const conv = makeConventions();
+    const mods = makeMods();
+    git(mods, 'update-index', '--chmod=+x', 'plugins/agent-models/hooks/pins.tsx');
+    git(mods, 'commit', '-q', '-m', 'mode');
+    const r = proof(mods, conv);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /hooks\/pins\.tsx/);
+    assert.match(r.out, /mode 100755/);
+    assert.match(r.out, /100644/);
+  });
+
+  it('C1g: a symlink in the folder is red, even when its target holds the right bytes', () => {
+    const conv = makeConventions();
+    const mods = makeMods();
+    fs.writeFileSync(path.join(mods, 'outside.txt'), 'test\n'); // the bytes of tests/band.test.tsx
+    const link = path.join(mods, 'plugins/agent-models/tests/band.test.tsx');
+    fs.rmSync(link);
+    fs.symlinkSync('../../../outside.txt', link);
+    git(mods, 'add', '-A');
+    git(mods, 'commit', '-q', '-m', 'link');
+    const r = proof(mods, conv);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /tests\/band\.test\.tsx/);
+    assert.match(r.out, /mode 120000/);
+  });
+
+  it('C1g: a file force-added under .claude-plugin/types/ is red (the engine writes that folder, git must not hold it)', () => {
+    const conv = makeConventions();
+    const mods = makeMods();
+    write(mods, { 'plugins/agent-models/.claude-plugin/types/x.d.ts': 'export {};\n' });
+    git(mods, 'add', '-f', 'plugins/agent-models/.claude-plugin/types/x.d.ts');
+    git(mods, 'commit', '-q', '-m', 'types');
+    const r = proof(mods, conv);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /\.claude-plugin\/types\/x\.d\.ts/);
+  });
+
+  it('C1g: an edit not committed is red too (the folder on disk equals the tree of HEAD)', () => {
+    const conv = makeConventions();
+    const mods = makeMods();
+    write(mods, { 'plugins/agent-models/hooks/pins.tsx': 'export const f = 9;\n' });
+    const r = proof(mods, conv);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /hooks\/pins\.tsx/);
+  });
+
+  it('C1e: the tag the tools job fetches (the line of ci.yml, run in a shallow clone) makes the proof green above 1.6.0', () => {
+    const ci = fs.readFileSync(path.join(path.dirname(TOOL), '..', '.github', 'workflows', 'ci.yml'), 'utf8');
+    const line = ci.split('\n').map((l) => l.trim()).find((l) => l.startsWith('git fetch') && l.includes('refs/tags/agent-models--v1.6.0'));
+    assert.ok(line, 'ci.yml has no git fetch of the tag agent-models--v1.6.0');
+    const conv = makeConventions();
+    const origin = makeMods();
+    git(origin, 'tag', 'agent-models--v1.6.0');
+    write(origin, {
+      'plugins/agent-models/.claude-plugin/plugin.json': pluginJson('1.6.1'),
+      'plugins/agent-models/hooks/pins.tsx': 'export const f = 99;\n',
+    });
+    git(origin, 'add', '-A');
+    git(origin, 'commit', '-q', '-m', 'move on');
+    const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-clone-'));
+    temps.push(clone);
+    fs.rmSync(clone, { recursive: true });
+    run('git', ['clone', '-q', '--depth', '1', `file://${origin}`, clone], os.tmpdir());
+    assert.equal(spawnSync('git', ['-C', clone, 'rev-parse', '--verify', '--quiet', 'refs/tags/agent-models--v1.6.0'], { encoding: 'utf8' }).status, 1, 'the shallow clone has the tag already');
+    const before = proof(clone, conv);
+    assert.equal(before.code, 1, before.out);
+    const fetch = spawnSync('sh', ['-c', line], { cwd: clone, encoding: 'utf8' });
+    assert.equal(fetch.status, 0, fetch.stderr);
+    const after = proof(clone, conv);
+    assert.equal(after.code, 0, after.out);
+    assert.match(after.out, /agent-models--v1\.6\.0/);
+    // With no tag at the origin the line does not fail the job; the proof is what says the tag is absent.
+    const bare = makeMods();
+    const clone2 = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-clone-'));
+    temps.push(clone2);
+    fs.rmSync(clone2, { recursive: true });
+    run('git', ['clone', '-q', `file://${bare}`, clone2], os.tmpdir());
+    assert.equal(spawnSync('sh', ['-c', line], { cwd: clone2, encoding: 'utf8' }).status, 0);
   });
 });
