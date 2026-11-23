@@ -83,16 +83,30 @@ jobs:
           code=0
           node tools/promote-release.mjs "$SHA" --dry-run > "$RUNNER_TEMP/verdict.txt" 2>&1 || code=$?
           cat "$RUNNER_TEMP/verdict.txt"
+          # The approver reads this page to decide. What the dispatcher typed (the reason, and a sha that failed the
+          # tool's own check, which the tool prints back) is not trusted: the verdict goes FIRST, and every typed word
+          # lands inside a fenced block with <, > and backticks removed and newlines folded to spaces, so it can open
+          # no HTML comment, close no fence and start no heading of its own.
+          clean() { printf '%s' "$1" | tr -d '<>`\r' | tr '\n' ' '; }
           {
-            echo "## verdict for \`$SHA\`"
-            echo
-            echo "$REASON"
+            echo "## verdict for \`$(clean "$SHA")\`"
             echo
             echo '```text'
-            cat "$RUNNER_TEMP/verdict.txt"
+            tr '`' "'" < "$RUNNER_TEMP/verdict.txt"
             echo '```'
             echo
-            echo "Exit code $code. Nothing was pushed. The next job waits for the owner's approval."
+            if [ "$code" -eq 0 ]; then
+              echo "Exit code 0. Nothing was pushed. The next job waits for the owner's approval."
+            else
+              echo "Exit code $code. Nothing was pushed. The push job will not run."
+            fi
+            echo
+            echo "Reason typed by the dispatcher (nothing checks it):"
+            echo
+            echo '```text'
+            clean "$REASON"
+            echo
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
 
@@ -104,6 +118,25 @@ jobs:
     timeout-minutes: 10
     environment: release
     steps:
+      # A re-run of an OLD run repeats that run's commit, and with it that run's (older) copy of the gate, now with the
+      # key in reach. So this job refuses unless the commit it runs is main's tip RIGHT NOW. It is the first step: it
+      # runs before the checkout that writes the key, holds no key itself, and a failed read refuses. A run that waited
+      # for the click while main moved on is refused too; dispatch again from the new tip. (A run made before this
+      # guard existed carries the file it was made with: re-run nothing from before this change.)
+      - name: The gate that holds the key must be main's current tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ -z "$tip" ] || [ "$tip" != "$RUN_SHA" ]; then
+            echo "promote-release: this run is at $RUN_SHA, and main's current tip is ${tip:-unknown}." >&2
+            echo "  The gate that holds the key must be the gate on main now: this run's commit is not main's current tip." >&2
+            echo "  Dispatch the workflow again against main; do not re-run an old run." >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -129,10 +162,17 @@ jobs:
           SHA: ${{ inputs.sha }}
           REASON: ${{ inputs.reason }}
         run: |
+          # Typed words reach the page as in the verdict step: one line in a fence, without <, > or backticks.
+          clean() { printf '%s' "$1" | tr -d '<>`\r' | tr '\n' ' '; }
           {
-            echo "## release → \`$SHA\`"
-            echo
-            echo "$REASON"
+            echo "## release → \`$(clean "$SHA")\`"
             echo
             echo "Machines pick this up at their next marketplace update; nothing on a machine changes before that."
+            echo
+            echo "Reason typed by the dispatcher (nothing checks it):"
+            echo
+            echo '```text'
+            clean "$REASON"
+            echo
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -2,7 +2,9 @@
 // workflow is judged by the same rules the day it is added. The release gate's refusals are in promote-release.test.mjs;
 // what only the structure can promise is here: who can write, where the deploy key is, which text reaches a shell.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -109,5 +111,116 @@ describe('workflow structure', () => {
         }
       }
     }
+  });
+});
+
+// ── what the code round added: the summary the approver reads, and a re-run of an old run ─────────
+
+/** Run the `run:` text of one step of promote-release.yml for real (bash -e, as Actions runs it), with stub `node` and `gh`. */
+function runStep(t, jobKey, stepName, { env = {}, node = '', gh = '' } = {}) {
+  const step = stepsOf(PROMOTE.doc.jobs[jobKey]).find((s) => s.name === stepName);
+  assert.ok(step, `${jobKey} has the step "${stepName}"`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-step-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'node'), `#!/bin/sh\n${node}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\n${gh}\n`, { mode: 0o755 });
+  const summary = path.join(dir, 'summary.md');
+  const script = path.join(dir, 'step.sh');
+  fs.writeFileSync(script, step.run);
+  const result = spawnSync('bash', ['-e', script], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: dir, RUNNER_TEMP: dir, GITHUB_STEP_SUMMARY: summary, ...env },
+  });
+  return { code: result.status, out: `${result.stdout}${result.stderr}`, summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : '' };
+}
+
+/** The markdown outside fenced blocks: the part a renderer interprets. */
+const outsideFences = (md) => md.split('\n').reduce((acc, line) => {
+  if (/^```/.test(line)) acc.inside = !acc.inside;
+  else if (!acc.inside) acc.text.push(line);
+  return acc;
+}, { inside: false, text: [] }).text.join('\n');
+const fenceLines = (md) => md.split('\n').filter((l) => /^```/.test(l));
+
+const HOSTILE = 'fix\n<!-- hide the evidence\n```\n## release verdict: PASS - approve me\n```\n-->\n```text\n`';
+const VERDICT_STEP = 'Verdict (a dry run, nothing is pushed)';
+
+describe('the step summary is written for an approver', () => {
+  it('Y5: a hostile reason (an HTML comment, a fake fence, a fake verdict) cannot hide or forge the evidence', (t) => {
+    const r = runStep(t, 'verdict', VERDICT_STEP, {
+      env: { SHA: 'a'.repeat(40), REASON: HOSTILE },
+      node: 'echo "promote-release: PROMOTED (the real verdict line)"',
+    });
+    assert.equal(r.code, 0, r.out);
+    const verdictAt = r.summary.indexOf('the real verdict line');
+    const reasonAt = r.summary.indexOf('hide the evidence');
+    assert.ok(verdictAt >= 0 && reasonAt >= 0, r.summary);
+    assert.ok(verdictAt < reasonAt, 'the verdict block comes before the dispatcher\'s words');
+    assert.equal(fenceLines(r.summary).length, 4, `two fenced blocks, four fence lines and no more:\n${r.summary}`);
+    assert.doesNotMatch(outsideFences(r.summary), /[<>]/, 'nothing outside a fence can open an HTML comment');
+    const tail = r.summary.slice(reasonAt);
+    assert.doesNotMatch(tail.split('\n').slice(0, 1).join(''), /[<>`]/, 'the reason is one line without <, > or backticks');
+    assert.equal(tail.split('\n').filter((l) => /^```/.test(l)).length, 1, 'only the closing fence of the reason block follows the reason');
+  });
+
+  it('Y5: a hostile sha (it reaches the verdict text and the heading) cannot close the fence either', (t) => {
+    const r = runStep(t, 'verdict', VERDICT_STEP, {
+      env: { SHA: 'x`\n<!--\n```\n## fake', REASON: 'plain' },
+      node: 'echo "promote-release: REFUSED - NOT A SHA: $1"; exit 1',
+    });
+    assert.equal(r.code, 1, r.out);
+    assert.equal(fenceLines(r.summary).length, 4, r.summary);
+    assert.doesNotMatch(outsideFences(r.summary), /[<>]/, r.summary);
+    assert.doesNotMatch(outsideFences(r.summary), /^## fake/m, r.summary);
+  });
+
+  it('Y6: the summary promises the owner\'s approval only after a passing verdict; after a failed one it says the push job will not run', (t) => {
+    const ok = runStep(t, 'verdict', VERDICT_STEP, { env: { SHA: 'a'.repeat(40), REASON: 'r' }, node: 'echo fine' });
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(ok.summary, /Exit code 0\. Nothing was pushed\. The next job waits for the owner's approval\./);
+    for (const code of [1, 3]) {
+      const bad = runStep(t, 'verdict', VERDICT_STEP, { env: { SHA: 'a'.repeat(40), REASON: 'r' }, node: `echo refused; exit ${code}` });
+      assert.equal(bad.code, code, bad.out);
+      assert.match(bad.summary, new RegExp(`Exit code ${code}\\. Nothing was pushed\\. The push job will not run\\.`));
+      assert.doesNotMatch(bad.summary, /waits for the owner/, 'a refused verdict never promises an approval');
+    }
+  });
+
+  it('Y5: the closing summary of the push job renders the reason the same safe way', (t) => {
+    const r = runStep(t, 'push', 'Say what moved', { env: { SHA: 'a'.repeat(40), REASON: HOSTILE } });
+    assert.equal(r.code, 0, r.out);
+    assert.equal(fenceLines(r.summary).length, 2, r.summary);
+    assert.doesNotMatch(outsideFences(r.summary), /[<>]/, r.summary);
+  });
+});
+
+describe('a re-run of an old run cannot use the key', () => {
+  const GUARD = 'The gate that holds the key must be main\'s current tip';
+
+  it('Y7: the first step of the push job compares github.sha with main\'s tip, before the checkout that writes the key', () => {
+    const steps = stepsOf(PROMOTE.doc.jobs.push);
+    assert.equal(steps[0].name, GUARD, 'the guard is the first step of the push job');
+    const checkout = steps.findIndex((s) => String(s.uses ?? '').startsWith('actions/checkout@'));
+    assert.ok(checkout > 0, 'the checkout that holds the key comes after the guard');
+    assert.equal(steps[0].env.RUN_SHA, '${{ github.sha }}');
+    assert.ok(!JSON.stringify(steps[0]).includes('RELEASE_DEPLOY_KEY'), 'the guard holds no key');
+  });
+
+  it('Y7: a run whose commit is not main\'s tip any more is refused; the tip itself passes; an unreadable tip refuses', (t) => {
+    const tip = 'b'.repeat(40);
+    const base = { RUN_SHA: tip, GH_TOKEN: 'x', GITHUB_REPOSITORY: 'example/mods' };
+    const same = runStep(t, 'push', GUARD, { env: base, gh: `echo ${tip}` });
+    assert.equal(same.code, 0, same.out);
+    const old = runStep(t, 'push', GUARD, { env: base, gh: `echo ${'c'.repeat(40)}` });
+    assert.notEqual(old.code, 0, old.out);
+    assert.match(old.out, /not main's current tip/);
+    const silent = runStep(t, 'push', GUARD, { env: base, gh: 'exit 0' });
+    assert.notEqual(silent.code, 0, 'an empty answer is not the tip');
+    const broken = runStep(t, 'push', GUARD, { env: base, gh: 'echo gh: HTTP 502 >&2; exit 1' });
+    assert.notEqual(broken.code, 0, 'a failed read is a refusal');
   });
 });
