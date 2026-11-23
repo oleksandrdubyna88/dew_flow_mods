@@ -2,7 +2,7 @@
 #
 # CodeRabbit for dew_flow_mods — a Claude Code plugin marketplace (plugins/agent-models) and the small node
 # tools that prove the copy and run in CI (tools/*.mjs).
-language: "ru-RU"
+language: "en-US"
 
 reviews:
   profile: "chill"

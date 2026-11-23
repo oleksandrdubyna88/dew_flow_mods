@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Claude Code mods of the dew_flow family: a plugin marketplace (agent-models). The package is the repository's own tools and the pinned Claude Code CLI; no plugin installs a dependency.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "test": "node --test \"tools/*.test.mjs\""
