@@ -1,0 +1,137 @@
+name: ci
+
+# One workflow, four jobs, because the release gate (story 2.2) reads the `ci` run of an exact sha.
+# Triggers are `pull_request` and `push`, never `pull_request_target`: no job here gets a secret, and a pull request
+# from a fork runs fork code with a read-only token (and, by repository setting, only after approval).
+# Every action is pinned to a full commit sha, the tag in a comment. Every install is `npm ci --ignore-scripts`:
+# no install script runs in CI. NO Claude login and NO credential is used anywhere (CI-1): the plugin steps run in an
+# environment with no ANTHROPIC_* variable and an empty HOME, and fail loudly if the CLI asks for a login.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The commit of dew_flow_conventions the plugin folder is a copy of (tools/copy-proof.mjs, test C1). Full sha:
+  # `git fetch` does not take an abbreviated one.
+  CONVENTIONS_COPY_SHA: 69adc1e21e0a6336aa04ba5fb50a9bce0ef999aa
+
+jobs:
+  tools:
+    name: mods · tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install (no install script)
+        run: npm ci --ignore-scripts
+      # `npm test` is `node --test "tools/*.test.mjs"`: copy-proof, type-baseline and claude-bin test themselves
+      # against real git repositories in a temp folder.
+      - name: Tools tests
+        run: npm test
+      # C1: the plugin folder equals mods/agent-models of dew_flow_conventions at the named commit. The conventions
+      # repository is public, so no token is needed to fetch the one commit.
+      - name: Fetch the commit the plugin was copied from
+        run: |
+          git submodule update --init --depth 1 .agents/conventions
+          git -C .agents/conventions fetch --depth 1 origin "$CONVENTIONS_COPY_SHA"
+      - name: C1 copy proof
+        run: node tools/copy-proof.mjs
+
+  plugin:
+    name: mods · plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install (no install script)
+        run: npm ci --ignore-scripts
+      # CI-2: `npm ci --ignore-scripts` leaves the npm package's stub; the native binary is in the optional
+      # dependency of the platform. The tool prints its path or fails with the reason.
+      - name: Find the native binary
+        run: echo "CLAUDE=$(node tools/claude-bin.mjs)" >> "$GITHUB_ENV"
+      # CI-1: every call below runs with an empty HOME and no ANTHROPIC_* variable (env -i), so a step that needs a
+      # login cannot borrow one. If one of them prints "Not logged in", this job stops and the owner decides.
+      - name: Validate the marketplace root
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          env -i HOME="$RUNNER_TEMP/home" PATH="$PATH" "$CLAUDE" plugin validate .
+      # CI-3: the engine's own type check is in `validate --json`; the baseline can only shrink.
+      - name: Validate the plugin and compare the type baseline
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          env -i HOME="$RUNNER_TEMP/home" PATH="$PATH" "$CLAUDE" plugin validate --json plugins/agent-models > "$RUNNER_TEMP/v.json"
+          node tools/type-baseline.mjs "$RUNNER_TEMP/v.json"
+      # The mod's own tests, run by the engine. R4 (limits-race) fails about once in eight runs: a red R4 is re-run
+      # once and named in the pull request; any other red is a red.
+      - name: Plugin tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          env -i HOME="$RUNNER_TEMP/home" PATH="$PATH" "$CLAUDE" plugin test plugins/agent-models
+
+  family:
+    name: family · plans · pins · adapter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Only that ONE submodule, shallow: the checks walk markdown and read the gitlink. The conventions
+      # repository is public, so no token is needed to fetch it. Node is the runner's own; none of the checks
+      # imports a package.
+      - name: Fetch the shared rules
+        run: git submodule update --init --depth 1 .agents/conventions
+      - name: Plan lifecycle
+        run: node .agents/conventions/tools/plan-lifecycle.mjs
+      - name: Adapter
+        run: node .agents/conventions/tools/adapter-check.mjs
+      - name: Pin check
+        run: node .agents/conventions/tools/pin-check.mjs
+
+  workflows:
+    name: workflows · actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # actionlint is pinned by VERSION and verified by CHECKSUM (the same promise a sha pin makes), as in
+      # dew_flow_conventions. It asserts shellcheck is present first: without it actionlint silently skips the
+      # analysis of every `run:` block and passes.
+      - name: Lint every workflow
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+        run: |
+          set -euo pipefail
+          command -v shellcheck > /dev/null || {
+            echo "shellcheck is not on PATH: actionlint would skip every run: block and pass"
+            exit 1
+          }
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-max-time 120 --retry-all-errors \
+            -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "$ACTIONLINT_SHA256  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
