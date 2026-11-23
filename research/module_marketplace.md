@@ -69,7 +69,7 @@ O1-O7 are not run): until you have looked, write what you asked for, not what it
 
 The tag rulesets name EVERY tag, not a pattern per plugin: a pattern covers only the names it spells, and a tag named
 `release` would be taken by `git fetch origin release` or `git clone --branch release` in place of the branch. Each
-ruleset's rule types and an empty `exclude` are fixed in `repo-settings.mjs` (`RULE_TYPES`) and checked by test D1.
+ruleset's rule types, its target, its exact `include` and an empty `exclude` are fixed in `repo-settings.mjs` (`RULE_TYPES`, `SCOPE`) and checked by test D1; a data set that lacks one of the five rulesets, or points `release-fixed` at another branch, is refused before GitHub is asked. The secrets listings are read page by page (100 to a page); a listing that ends short of its count is exit 3. The launcher of `gh` stops a timed-out `gh` with every process it started.
 
 Two rulesets for each ref because a bypass covers every rule of its ruleset: with one, the key could also rewind and
 delete. The `release` environment is REQUESTED to have the owner as its one required reviewer, `main` as its one
