@@ -20,6 +20,12 @@ function job(key) {
 }
 
 describe('ci.yml shape', () => {
+  it('S0: the triggers are push and pull_request only (no workflow_dispatch, never pull_request_target)', () => {
+    const on = CI.slice(CI.indexOf('\non:\n') + 1, CI.indexOf('\nconcurrency:'));
+    const triggers = on.split('\n').filter((l) => /^ {2}\S/.test(l)).map((l) => l.trim().replace(/:.*$/, ''));
+    assert.deepEqual(triggers, ['push', 'pull_request']);
+  });
+
   it('S1: no instruction to re-run a red job (no re-run hoping)', () => {
     assert.doesNotMatch(CI, /re-?run/i);
   });
