@@ -38,7 +38,7 @@ flowchart LR
 
 ## The release gate (story 2.2)
 
-`release` moves only by `.github/workflows/promote-release.yml`, which runs `tools/promote-release.mjs` (a copy of the
+`release` is designed to move only by `.github/workflows/promote-release.yml` (requested of GitHub, not yet observed), which runs `tools/promote-release.mjs` (a copy of the
 tool of the same name in dew_flow_conventions `69adc1e`, with four differences) and `tools/mods-gate.mjs`.
 
 | Question | Answer that promotes | Refusal |

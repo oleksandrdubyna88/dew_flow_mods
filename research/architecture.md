@@ -31,7 +31,7 @@ flowchart TB
 
 ## The two refs
 
-`main` is written by pull request only (ruleset `main`). `release` is the one ref that machines load, and it moves only
+`main` is written by pull request only (ruleset `main`). `release` is the one ref that machines load. The design asks that it move only
 through `.github/workflows/promote-release.yml`: the owner dispatches it against `main` with a sha; the job `verdict` (no
 secret) judges the commit and prints the compare URL; the job `push` (environment `release`, the owner approves) judges it
 again and pushes `release` and the tag `<plugin>--v<version>` in one atomic push with the deploy key; the job refuses first

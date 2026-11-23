@@ -19,10 +19,12 @@ Licence: MIT, see [LICENSE](LICENSE).
 
 ## The release gate
 
-`release` is the ref every machine loads. It moves only by the workflow `promote-release`, run from `main` by the owner:
+`release` is the ref every machine loads. The design asks that it move only by the workflow `promote-release`, run from `main` by
+the owner. That is what the settings below request; until the observations O1-O7 are run, nothing says GitHub enforces it.
+Replace `YOUR_FULL_SHA` with the full 40-character sha of the commit on `main` to publish:
 
 ```bash
-gh workflow run promote-release.yml --repo oleksandrdubyna88/dew_flow_mods --ref main -f sha=<40-hex sha of main> -f reason="what changed"
+gh workflow run promote-release.yml --repo oleksandrdubyna88/dew_flow_mods --ref main -f sha=YOUR_FULL_SHA -f reason="what changed"
 ```
 
 The job `verdict` is a dry run: it prints the compare URL, the plugins that changed and the commit the gate runs at.
