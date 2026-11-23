@@ -26,10 +26,13 @@ gh workflow run promote-release.yml --repo oleksandrdubyna88/dew_flow_mods --ref
 ```
 
 The job `verdict` is a dry run: it prints the compare URL, the plugins that changed and the commit the gate runs at.
-The job `push` waits for the owner's approval in the `release` environment, then pushes `release` and the tag
-`<plugin>--v<version>` in one atomic push with the deploy key. The judgement ([tools/promote-release.mjs](tools/promote-release.mjs),
+The job `push` is set to wait for the owner's approval in the `release` environment (requested, not yet observed), refuses to
+run when its commit is not the current tip of `main`, then pushes `release` and the tag `<plugin>--v<version>` in one
+atomic push with the deploy key. The judgement ([tools/promote-release.mjs](tools/promote-release.mjs),
 [tools/mods-gate.mjs](tools/mods-gate.mjs)): the sha is on `main`, its `ci` push run is green, the move is forward, the
 layout of the catalog is exact, and every plugin folder that differs from `release` has a higher `plugin.json` version.
+Nothing here has been applied to GitHub or observed there yet: the settings and what they achieve are requests until the
+observations are run.
 
 The settings GitHub holds are data: `.github/rulesets/*.json` and `.github/settings.json`.
 `node .github/scripts/repo-settings.mjs` reads them back (exit 0 when equal), `--apply --dry-run` prints the calls an

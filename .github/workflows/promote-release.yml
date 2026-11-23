@@ -1,9 +1,10 @@
 name: promote-release
 
 # `release` is the ref every machine's marketplace entry follows, and what is on it runs in every Claude Code session
-# with the owner's permissions. This file is the ONLY way it moves: a ruleset (.github/rulesets/release-moves.json)
-# lets nobody create or update it except the deploy key that lives in the `release` environment, and the same key alone
-# may create a version tag (tags-create.json). Nobody can rewind or delete either (release-fixed.json, tags-fixed.json).
+# with the owner's permissions. This file is meant to be the ONLY way it moves: a ruleset (.github/rulesets/release-moves.json)
+# asks GitHub to let nobody create or update it except the deploy key that lives in the `release` environment, and the same
+# key alone to create a tag, any tag (tags-create.json, `~ALL`). Nobody may rewind or delete either (release-fixed.json,
+# tags-fixed.json). Those are REQUESTED settings: until the observations are run, nothing here is known to be enforced.
 #
 # Two jobs, and the order is the design:
 #   verdict  no environment, no secret. A dry run of the whole judgement: main, the green `ci` push run of that exact

@@ -34,11 +34,13 @@ flowchart TB
 `main` is written by pull request only (ruleset `main`). `release` is the one ref that machines load, and it moves only
 through `.github/workflows/promote-release.yml`: the owner dispatches it against `main` with a sha; the job `verdict` (no
 secret) judges the commit and prints the compare URL; the job `push` (environment `release`, the owner approves) judges it
-again and pushes `release` and the tag `<plugin>--v<version>` in one atomic push with the deploy key. The judgement is the
+again and pushes `release` and the tag `<plugin>--v<version>` in one atomic push with the deploy key; the job refuses first
+if its commit is not the current tip of `main` (a re-run of an old run). The judgement is the
 green `ci` push run of that exact sha, forward only, a layout gate, a version gate and a free tag. Rulesets let only the
-deploy key create or move `release` and create a version tag, and let nobody rewind or delete either. The rules and
-the settings are data with a read-back: see [module_marketplace.md](module_marketplace.md). Nothing is released until the
-settings are applied and the first promotion runs; that promotion makes the tag `agent-models--v1.6.0`, and the copy
+deploy key create or move `release` and create any tag, and let nobody rewind or delete either (that is what the data
+ASKS of GitHub: nothing has been observed yet). The rules and the settings are data with a read-back: see
+[module_marketplace.md](module_marketplace.md). Nothing is released until the settings are applied and the first
+promotion runs; that promotion makes the tag `agent-models--v1.6.0`, and the copy
 proof reads it once `plugin.json` goes above 1.6.0.
 
 What is on `release` runs on every machine with the owner's permissions and outside any sandbox: a change under
