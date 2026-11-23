@@ -1,0 +1,175 @@
+{
+  "engine": "2.1.330",
+  "findings": [
+    {
+      "file": "hooks/tasks.tsx",
+      "message": "error TS2345: Argument of type 'PromptFilled' is not assignable to parameter of type '{ isFilled: boolean; refusal?: \"no_composer\" | \"dialog\" | undefined; }'. Types of property 'refusal' are incompatible. Type '\"no_composer\" | \"dialog\" | \"unanswered\" | undefined' is not assignable to type '\"no_composer\" | \"dialog\" | undefined'. Type '\"unanswered\"' is not assignable to type '\"no_composer\" | \"dialog\" | undefined'.",
+      "count": 1
+    },
+    {
+      "file": "tests/account-fixtures.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/account.test.tsx",
+      "message": "error TS2345: Argument of type '{ props: { maxRows: number; hasSurvey: false; isWorking: false; bodyColumns: 80; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }; surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ maxRows: number; hasSurvey: false; isWorking: false; bodyColumns: 80; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 2
+    },
+    {
+      "file": "tests/account.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 2
+    },
+    {
+      "file": "tests/account.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 22
+    },
+    {
+      "file": "tests/answer-fixtures.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; viewport: { columns: number; rows: number; isFullscreen: true; }; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; ... 4 more ...; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/answer-list.test.tsx",
+      "message": "error TS2345: Argument of type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to parameter of type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<Account | undefined, number | boolean | Account | string[] | Record<string, string> | Login | ... 6 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly value?: MatcherValue<...> | undefined; readon...'. Type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<boolean | undefined, number | boolean | Account | string[] | Record<string, string> | Login | Viewer | ... 5 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly value?: MatcherValue<...> | undefine...'. Types of property 'key' are incompatible. Type '\"viewer\" | \"tasks\"' is not assignable to type 'MatcherValue<\"answerListOpen\", \"ac… [+400 chars]",
+      "count": 1
+    },
+    {
+      "file": "tests/answer-list.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; viewport: { readonly columns: 80; readonly rows: 24; readonly isFullscreen: true; } | { readonly columns: 80; readonly rows: 24; readonly isFullscreen: false; }; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { ...; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/answer.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/answer.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; viewport: { readonly columns: 80; readonly rows: 24; readonly isFullscreen: false; }; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { ...; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/answer.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; viewport: { readonly columns: 80; readonly rows: 24; readonly isFullscreen: true; }; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { ...; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 2
+    },
+    {
+      "file": "tests/answer.test.tsx",
+      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ bodyColumns: number; maxRows: 6 | 7; hasSurvey: false; isWorking: false; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/band.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 9
+    },
+    {
+      "file": "tests/band.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/band.test.tsx",
+      "message": "error TS2740: Type '{ name?: string | undefined; id: string; description: string; type: string; status: AgentStatus; }' is missing the following properties from type 'AgentInfo': kind, taskStatus, label, startTime, and 4 more.",
+      "count": 1
+    },
+    {
+      "file": "tests/band.test.tsx",
+      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ hasSurvey: true; isWorking: false; maxRows: 12; bodyColumns: 80; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/limits-race.test.tsx",
+      "message": "error TS2345: Argument of type '{ readonly props: { readonly bodyColumns: 30; readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }; readonly surface: \"terminal\"; readonly plugin: \"agent-models\"; readonly component: \"AbovePrompt\"; readonly r...' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly bodyColumns: 30; readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/limits-race.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/limits-race.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 10
+    },
+    {
+      "file": "tests/limits-race.test.tsx",
+      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ maxRows: 14 | 15; bodyColumns: 30; hasSurvey: false; isWorking: false; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/limits.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 5
+    },
+    {
+      "file": "tests/limits.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 14
+    },
+    {
+      "file": "tests/reset.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/reset.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 8
+    },
+    {
+      "file": "tests/reset.test.tsx",
+      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ bodyColumns: number; maxRows: 10 | 11; hasSurvey: false; isWorking: false; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/tasks-race.test.tsx",
+      "message": "error TS2345: Argument of type '{ readonly plugin: \"agent-models\"; readonly component: \"AbovePrompt\"; readonly requestId: \"band\"; readonly surface: \"terminal\"; readonly props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 10
+    },
+    {
+      "file": "tests/tasks-send.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/tasks.test.tsx",
+      "message": "error TS18048: 'answer.value' is possibly 'undefined'.",
+      "count": 1
+    },
+    {
+      "file": "tests/tasks.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 11
+    },
+    {
+      "file": "tests/tasks.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 8
+    },
+    {
+      "file": "tests/viewer.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 22
+    },
+    {
+      "file": "tests/viewer.test.tsx",
+      "message": "error TS2740: Type '{ id: string; description: string; type: string; status: AgentStatus; }' is missing the following properties from type 'AgentInfo': kind, taskStatus, label, startTime, and 4 more.",
+      "count": 1
+    },
+    {
+      "file": "tests/week-reset.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\" | \"desktop\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\" | \"desktop\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 1
+    },
+    {
+      "file": "tests/week-reset.test.tsx",
+      "message": "error TS2345: Argument of type '{ surface: \"terminal\"; plugin: \"agent-models\"; component: \"AbovePrompt\"; requestId: \"band\"; props: { readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { ...; }; readonly view: {}; }; }' is not assignable to parameter of type 'MountTarget<\"terminal\", \"AbovePrompt\">'. Types of property 'props' are incompatible. Property 'isCollapsed' is missing in type '{ readonly hasSurvey: false; readonly isWorking: false; readonly maxRows: 12; readonly bodyColumns: 80; readonly scroll: { readonly offset: 0; readonly bodyRows: 11; }; readonly view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "count": 4
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+name: pr · title
+
+# The pull request title becomes the line in main's history (squash uses the title), so it says what changed
+# in the family's own shape: `type: what changed`. It runs on `pull_request` with a read-only token: this
+# repository never uses `pull_request_target`, which would run with a write token and secrets against a fork's PR.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic:
+    name: pr · semantic title
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            test
+            chore
+            refactor
+            perf
+            ci
+            build
+          requireScope: false
