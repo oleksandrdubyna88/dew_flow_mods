@@ -1,0 +1,197 @@
+name: promote-release
+
+# `release` is the ref every machine's marketplace entry follows, and what is on it runs in every Claude Code session
+# with the owner's permissions. This file is meant to be the ONLY way it moves: a ruleset (.github/rulesets/release-moves.json)
+# asks GitHub to let nobody create or update it except the deploy key that lives in the `release` environment, and the same
+# key alone to create a tag, any tag (tags-create.json, `~ALL`). Nobody may rewind or delete either (release-fixed.json,
+# tags-fixed.json). Those are REQUESTED settings: until the observations are run, nothing here is known to be enforced.
+#
+# Two jobs, and the order is the design:
+#   verdict  no environment, no secret. A dry run of the whole judgement: main, the green `ci` push run of that exact
+#            sha, forward only, the layout, the version, the tag. Its output is the step summary, so the compare URL,
+#            the plugins that changed and the commit the gate runs at are on screen BEFORE anybody is asked to approve.
+#            Its output `moves` is false when release is already the sha: the push job is then skipped, no approval asked.
+#   push     `needs: verdict`, environment `release`: the owner approves here (required reviewer, deployment branch
+#            main only). The deploy key is read by this job and by nothing else: the checkout uses it, the tool pushes
+#            `<sha>:refs/heads/release` and the tag in ONE atomic push, and the judgement runs AGAIN because main, ci and
+#            release can change while the run waits for the click. This job runs no `npm`: the tool has no dependency,
+#            so nothing unreviewed runs beside the key.
+#
+# Dispatch it against `main` only. Both jobs refuse any other ref: the gate that judges a promotion must be the
+# reviewed one on main, not whatever a branch carries. Both check out the dispatched commit (`github.sha`), never a
+# ref an input names, and the judged commit may be older than the gate that judges it (the verdict says which).
+#
+# There is no rewind input. Rollback is a FORWARD release: revert the content on main and promote the new commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The reviewed commit on main to publish (full 40-character sha)"
+        required: true
+      reason:
+        description: "What this release contains, in one line, for the run summary"
+        required: true
+
+# One promotion at a time. Two concurrent runs could each judge a different sha as a forward move from the release
+# they both read before either pushed.
+concurrency:
+  group: promote-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verdict:
+    name: promote · verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      # `true` only when the verdict passed AND release is not already at the sha. An absent or false output skips the
+      # push job, so a no-op promotion asks nobody for an approval and never reaches the key.
+      moves: ${{ steps.verdict.outputs.moves }}
+    steps:
+      - name: The gate that judges must be main's gate
+        if: github.ref != 'refs/heads/main'
+        env:
+          # Through the environment, never as text in the script: an expression written inline is expanded by Actions
+          # before the shell parses the line.
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          echo "promote-release: refusing to run from $DISPATCH_REF." >&2
+          echo "  Dispatch this workflow against main: the gate that judges a promotion must be the" >&2
+          echo "  reviewed one, not whatever a branch happens to carry." >&2
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          # The tool asks whether the sha is an ancestor of main and how far release is behind it; both are
+          # questions a shallow clone cannot answer, and it refuses one outright.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Verdict (a dry run, nothing is pushed)
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # The inputs reach the shell as ENVIRONMENT, never as text substituted into this script: `${{ inputs.sha }}`
+          # written inline would run a value like `$(curl …)` on the runner before the tool's 40-hex check sees it.
+          SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          code=0
+          node tools/promote-release.mjs "$SHA" --dry-run > "$RUNNER_TEMP/verdict.txt" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/verdict.txt"
+          # A sha that release already points at passes the judgement and moves nothing: the tool says so in one line.
+          # Only a passing verdict can be a no-op (a refusal prints back text the dispatcher typed, and exits non-zero).
+          moves=false
+          if [ "$code" -eq 0 ]; then
+            moves=true
+            if grep -Eq '^promote-release: release is already [0-9a-f]{40} .* nothing to move' "$RUNNER_TEMP/verdict.txt"; then
+              moves=false
+            fi
+          fi
+          echo "moves=$moves" >> "$GITHUB_OUTPUT"
+          # The approver reads this page to decide. What the dispatcher typed (the reason, and a sha that failed the
+          # tool's own check, which the tool prints back) is not trusted: the verdict goes FIRST, and every typed word
+          # lands inside a fenced block with <, > and backticks removed and newlines folded to spaces, so it can open
+          # no HTML comment, close no fence and start no heading of its own.
+          clean() { printf '%s' "$1" | tr -d '<>`\r' | tr '\n' ' '; }
+          {
+            echo "## verdict for \`$(clean "$SHA")\`"
+            echo
+            echo '```text'
+            tr '`' "'" < "$RUNNER_TEMP/verdict.txt"
+            echo '```'
+            echo
+            if [ "$code" -eq 0 ] && [ "$moves" = false ]; then
+              echo "Exit code 0. release is already this commit: nothing moved, nothing was pushed, and no approval will be asked. The push job is skipped."
+            elif [ "$code" -eq 0 ]; then
+              echo "Exit code 0. Nothing was pushed. The next job waits for the owner's approval."
+            else
+              echo "Exit code $code. Nothing was pushed. The push job will not run."
+            fi
+            echo
+            echo "Reason typed by the dispatcher (nothing checks it):"
+            echo
+            echo '```text'
+            clean "$REASON"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
+  push:
+    name: promote · push
+    needs: verdict
+    if: github.ref == 'refs/heads/main' && needs.verdict.outputs.moves == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      # A re-run of an OLD run repeats that run's commit, and with it that run's (older) copy of the gate, now with the
+      # key in reach. So this job refuses unless the commit it runs is main's tip RIGHT NOW. It is the first step: it
+      # runs before the checkout that writes the key, holds no key itself, and a failed read refuses. A run that waited
+      # for the click while main moved on is refused too; dispatch again from the new tip. (A run made before this
+      # guard existed carries the file it was made with: re-run nothing from before this change.)
+      - name: The gate that holds the key must be main's current tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ -z "$tip" ] || [ "$tip" != "$RUN_SHA" ]; then
+            echo "promote-release: this run is at $RUN_SHA, and main's current tip is ${tip:-unknown}." >&2
+            echo "  The gate that holds the key must be the gate on main now: this run's commit is not main's current tip." >&2
+            echo "  Dispatch the workflow again against main; do not re-run an old run." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # THE ONE CHECKOUT IN THIS REPOSITORY THAT HOLDS A KEY. The deploy key is written for the push below and
+          # removed when the job ends; the repository's default token stays read-only.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
+        run: node tools/promote-release.mjs "$SHA"
+
+      - name: Say what moved
+        if: success()
+        env:
+          SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          # Typed words reach the page as in the verdict step: one line in a fence, without <, > or backticks.
+          clean() { printf '%s' "$1" | tr -d '<>`\r' | tr '\n' ' '; }
+          {
+            echo "## release → \`$(clean "$SHA")\`"
+            echo
+            echo "Machines pick this up at their next marketplace update; nothing on a machine changes before that."
+            echo
+            echo "Reason typed by the dispatcher (nothing checks it):"
+            echo
+            echo '```text'
+            clean "$REASON"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,12 @@
+{
+  "$note": "release is created and moved only by the deploy key held in the `release` environment (bypass actor DeployKey: every deploy key of the repository, and there is exactly one). A bypass covers every rule of its ruleset, so this ruleset holds only creation and update; the rules that stop a rewind or a delete are in release-fixed.json, which has no bypass.",
+  "name": "release-moves",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/release"], "exclude": [] } },
+  "bypass_actors": [{ "actor_id": null, "actor_type": "DeployKey", "bypass_mode": "always" }],
+  "rules": [
+    { "type": "creation" },
+    { "type": "update", "parameters": { "update_allows_fetch_and_merge": false } }
+  ]
+}

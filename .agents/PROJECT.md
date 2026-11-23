@@ -20,6 +20,8 @@ that lives in `dew_flow_conventions`. The plan is in `todo/PLAN_from_conventions
 npm ci --ignore-scripts                                         # the pinned Claude Code CLI; never run an install script
 npm test                                                        # node --test over tools/*.test.mjs
 node tools/copy-proof.mjs                                       # C1: the plugin folder equals the named conventions commit
+node tools/mods-gate.mjs                                        # the layout gate of HEAD (the promotion runs the same one)
+node .github/scripts/repo-settings.mjs                          # the rulesets, environment, deploy key and Actions settings equal their data (needs the owner's gh login)
 CLAUDE=$(node tools/claude-bin.mjs)                             # the native binary that --ignore-scripts leaves
 "$CLAUDE" plugin validate .                                     # the marketplace root
 "$CLAUDE" plugin validate --json plugins/agent-models > v.json && node tools/type-baseline.mjs v.json
@@ -38,4 +40,8 @@ node .agents/conventions/tools/pin-check.mjs
   `package.json`, lockfile or link that leaves it.
 - **CI runs on `pull_request`, never `pull_request_target`**, with a read-only token and every action pinned to a
   full commit sha.
-- **No credential in CI.** If a step needs a login, stop and ask the owner.
+- **No credential in CI, with ONE approved exception: the release deploy key.** `RELEASE_DEPLOY_KEY` is held only by the
+  job `push` of `promote-release.yml`, which runs in the `release` environment (the owner approves each run); no other job,
+  workflow or step names it. This is the owner-approved design (parent plan `PLAN_dew_flow_mods.md` § B and Q2 in
+  `dew_flow_conventions`), and `tools/workflows.test.mjs` Y3 keeps it to that one job. If any other step needs a login,
+  stop and ask the owner.

@@ -1,0 +1,12 @@
+{
+  "$note": "No tag is ever moved or deleted (include ~ALL): no bypass actor.",
+  "name": "tags-fixed",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "update" },
+    { "type": "deletion" }
+  ]
+}
