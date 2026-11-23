@@ -49,6 +49,12 @@ jobs:
         run: |
           git submodule update --init --depth 1 .agents/conventions
           git -C .agents/conventions fetch --depth 1 origin "$CONVENTIONS_COPY_SHA"
+      # Once plugin.json goes above 1.6.0 the proof reads the tree of the tag agent-models--v1.6.0, and a shallow
+      # checkout has no tag. The tag does not exist before the first promotion: then the fetch finds nothing and the
+      # step goes on, because the proof is the one that turns an absent tag into a red (only above 1.6.0).
+      - name: Fetch the tag of the proven version
+        run: |
+          git fetch --depth 1 origin "refs/tags/agent-models--v1.6.0:refs/tags/agent-models--v1.6.0" || echo "no tag agent-models--v1.6.0 at origin yet"
       - name: C1 copy proof
         run: node tools/copy-proof.mjs
 
@@ -68,7 +74,9 @@ jobs:
       # CI-2: `npm ci --ignore-scripts` leaves the npm package's stub; the native binary is in the optional
       # dependency of the platform. The tool prints its path or fails with the reason.
       - name: Find the native binary
-        run: echo "CLAUDE=$(node tools/claude-bin.mjs)" >> "$GITHUB_ENV"
+        run: |
+          bin=$(node tools/claude-bin.mjs)
+          echo "CLAUDE=$bin" >> "$GITHUB_ENV"
       # CI-1: every call below runs with an empty HOME and no ANTHROPIC_* variable (env -i), so a step that needs a
       # login cannot borrow one. If one of them prints "Not logged in", this job stops and the owner decides.
       - name: Validate the marketplace root
@@ -81,8 +89,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/home"
           env -i HOME="$RUNNER_TEMP/home" PATH="$PATH" "$CLAUDE" plugin validate --json plugins/agent-models > "$RUNNER_TEMP/v.json"
           node tools/type-baseline.mjs "$RUNNER_TEMP/v.json"
-      # The mod's own tests, run by the engine. R4 (limits-race) fails about once in eight runs: a red R4 is re-run
-      # once and named in the pull request; any other red is a red.
+      # The mod's own tests, run by the engine. R4 (limits-race) fails about one run in eight: that is a known flaw
+      # of the mod, recorded in todo/README.md, to be fixed in the next mod version. A red run is a red.
       - name: Plugin tests
         run: |
           mkdir -p "$RUNNER_TEMP/home"
