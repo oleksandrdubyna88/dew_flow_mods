@@ -876,7 +876,7 @@ test("dry: with no release yet the compare line is the commit's own and every pl
   assert.equal(code, EXIT.PROMOTED, out);
   const lines = out.split("\n");
   assert.ok(lines.includes(`promote-release: compare https://github.com/${SLUG}/commits/${s.rules.first}`), out);
-  assert.ok(lines.includes("promote-release: plugins: agent-models none → 1.6.0, 3 file(s)"), out);
+  assert.ok(lines.includes("promote-release: plugins: agent-models none → 1.6.0, 4 file(s)"), out);
 });
 
 // ── G9: the layout of the commit ─────────────────────────────────────────────────────────────────

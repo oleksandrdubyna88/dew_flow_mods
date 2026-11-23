@@ -1,29 +1,38 @@
 #!/usr/bin/env node
 // promote-release.mjs — `release` moves to the commit a person names, and only to one that has earned it.
 //
-// `release` is the ref every consumer's .gitmodules follows — pin-check.mjs judges their pins against
-// its tip — so whatever this file lets through becomes the policy of six repositories at their next
-// pin bump, and a wrong pass ships an unverified commit to all of them at once. That is the failure
-// this file exists to make impossible, and it is why the gate is a script rather than a workflow's
+// `release` is the ref every machine's marketplace entry follows. What is on it runs in every Claude Code
+// session, with the owner's permissions, so whatever this file lets through ships to every machine at its
+// next marketplace update, and a wrong pass ships an unverified commit to all of them at once. That is the
+// failure this file exists to make impossible, and it is why the gate is a script rather than a workflow's
 // `run:` block: a refusal written in YAML can only be exercised by running the workflow, and a gate
 // that has only ever been seen open is a gate nobody has seen close. promote-release.test.mjs closes
 // this one every way it can close, against real repositories in a temp directory.
+//
+// This copy differs from dew_flow_conventions' in four ways, and only these: the layout and version gates of
+// tools/mods-gate.mjs, read from git objects at the judged sha; a tag `<plugin>--v<version>` per raised version,
+// pushed with `release` in ONE atomic push; only a `ci` run of event `push` on `main` counts as evidence (the
+// repository's ci cancels a superseded run, and a cancelled run is not green); and a verdict that names the compare
+// URL, the plugins that changed and the commit the gate itself runs at.
 //
 // It is FAIL-CLOSED. Every question has one answer that promotes and every other answer refuses:
 //   - the sha must be a full 40-hex commit id — a branch name resolves to whatever it points at when
 //     the workflow happens to run, and main is a moving target;
 //   - the commit must be reachable from origin's main — a release is a commit that merged, never a
 //     branch tip;
-//   - the `ci` workflow must have run for THAT EXACT sha and be `completed` with `success`. An absent
+//   - the `ci` workflow must have run for THAT EXACT sha (event `push`, branch `main`) and be `completed`
+//     with `success`. An absent
 //     run and a run still in progress are both refusals, never passes: neither has verified anything
 //     yet. This is the most important behaviour in the file, and the one a shortcut reaches for first;
-//   - release must move FORWARD — the commit it points at today must be an ancestor of the new one.
+//   - release must move FORWARD — the commit it points at today must be an ancestor of the new one;
+//   - the layout of the commit is the marketplace's (tools/mods-gate.mjs), and a plugin folder that differs
+//     from release has a higher version (equal or lower is refused; a malformed one is a layout finding);
+//   - the tag of a raised version does not already exist at another sha.
 //
 // There is no rewind or force input, deliberately. Rollback is a forward release: revert the content
-// on main, merge, promote the new sha. Moving `release` backwards would make every consumer's
-// committed pin differ from the tip at once, reddening all of them DURING the incident the rollback
-// exists to end, and a non-fast-forward update breaks every cached clone's
-// `git submodule update --remote`. The push below carries no --force, so git itself refuses a rewind
+// on main, merge, promote the new sha. Moving `release` backwards would leave every machine that
+// already updated on a version release no longer names, and a non-fast-forward update breaks every cached
+// clone of the marketplace. The push below carries no --force, so git itself refuses a rewind
 // even if the ancestry check above it is ever edited away.
 //
 // The ref is pushed as `<sha>:refs/heads/release`, spelled in full, so it can only ever be a branch:
@@ -53,6 +62,7 @@ import { parseArgs } from "node:util";
 
 import { git as gitIn } from "./lib/git.mjs";
 import { run } from "./lib/proc.mjs";
+import { layoutFindings, versionVerdict } from "./mods-gate.mjs";
 
 /** The remote the workflow's checkout has. The ref is judged and moved THERE, never in a local clone. */
 const REMOTE = "origin";
@@ -179,9 +189,12 @@ export function ciRunsFor(answer, sha) {
     return { error: `the answer's total_count is ${JSON.stringify(parsed.total_count)}, which is not a count of runs` };
   }
 
+  // Only a `push` run on `main` is evidence about a commit of main. A pull_request run of a branch, a dispatch at
+  // a branch tip or a schedule says nothing about what main reviewed.
   const isCi = (r) => r.name === CI_WORKFLOW || r.path === CI_WORKFLOW_PATH;
+  const isMainPush = (r) => r.event === "push" && r.head_branch === "main";
   return {
-    runs: parsed.workflow_runs.filter((r) => isCi(r) && String(r.head_sha).toLowerCase() === sha),
+    runs: parsed.workflow_runs.filter((r) => isCi(r) && isMainPush(r) && String(r.head_sha).toLowerCase() === sha),
     total,
     listed: parsed.workflow_runs.length,
   };
@@ -224,9 +237,10 @@ export async function collectCiRuns(gh, repository, sha) {
 export function judgeRuns(runs, sha, repository) {
   if (runs.length === 0) {
     return refused("NO CI RUN",
-      `GitHub lists no run of the \`${CI_WORKFLOW}\` workflow for ${sha} in ${repository}.`,
+      `GitHub lists no run of the \`${CI_WORKFLOW}\` workflow for ${sha} in ${repository} (event push, branch main).`,
       "An absent run is not a pass — it means nothing has verified this commit: a push CI skipped, a",
-      "workflow renamed, or a sha that was never on GitHub. A run still queued is refused the same way.",
+      "workflow renamed, or a sha that was never on GitHub. A run still queued is refused the same way,",
+      "and so is a run of another event or branch: only the push run on main speaks for a commit of main.",
       `fix:   promote a commit \`${CI_WORKFLOW}\` has run for — usually main's tip. A dispatch of \`${CI_WORKFLOW}\` runs at a`,
       "       branch tip, so an older commit it never checked cannot be checked after the fact.");
   }
@@ -248,10 +262,10 @@ export function judgeRuns(runs, sha, repository) {
   return { ok: true, urls: runs.map((r) => r.html_url ?? `run ${r.id}`) };
 }
 
-/** `sha\tref` lines from ls-remote for the two refs this tool cares about, as ref → sha. */
-function remoteTips(git) {
+/** `sha\tref` lines from ls-remote for main, release and any more refs asked for (the tags), as ref → sha. */
+function remoteTips(git, more = []) {
   const tips = new Map();
-  for (const line of git("ls-remote", REMOTE, MAIN_REF, RELEASE_REF).split("\n").filter(Boolean)) {
+  for (const line of git("ls-remote", REMOTE, MAIN_REF, RELEASE_REF, ...more).split("\n").filter(Boolean)) {
     const [sha, ref] = line.split(/\s+/);
     tips.set(ref, sha);
   }
@@ -313,7 +327,7 @@ function standing({ sha, git, say }) {
       `fix:   the objects behind ${REMOTE}'s main are needed to judge ancestry; fix the fetch and run again.`);
   }
 
-  const onMain = "A release is a commit that merged into main, never a branch tip: what every consumer loads as policy is what main reviewed.";
+  const onMain = "A release is a commit that merged into main, never a branch tip: what every machine loads is what main reviewed.";
   if (objectType(git, sha) !== "commit") {
     return refused("NOT ON MAIN",
       `this checkout has no commit ${sha} at all — and it has just fetched main (${main}).`, onMain,
@@ -330,9 +344,9 @@ function standing({ sha, git, say }) {
       : `${sha} is beside it — neither reaches the other`;
     return refused("NOT A FORWARD MOVE",
       `release is ${release}, and ${relation}.`,
-      "release only moves forward. Moving it back would make every consumer's committed pin differ from",
-      "the tip at once — every repository red during the incident the rollback exists to end — and a",
-      "non-fast-forward update breaks each cached clone's `git submodule update --remote`.",
+      "release only moves forward. Moving it back would leave every machine that already updated on a",
+      "version release no longer names, and a non-fast-forward update breaks each cached clone of the",
+      "marketplace.",
       "fix:   rollback is a forward release: revert the content on main, merge, and promote the NEW commit.");
   }
 
@@ -340,8 +354,45 @@ function standing({ sha, git, say }) {
 }
 
 /**
+ * The marketplace's own questions, asked of the sha's git objects and never of the work tree: the layout, the
+ * version, and whether the tag of a raised version is free. `release` is the remote tip ("" when there is none yet).
+ */
+function modsGate({ sha, release, git }) {
+  const findings = layoutFindings({ git, rev: sha, release });
+  if (findings.length > 0) {
+    return refused("LAYOUT",
+      `${findings.length} finding(s) in the layout of ${sha}:`,
+      ...findings.map((f) => `${f.path}: ${f.reason}`),
+      "A machine loads this layout as it is, with the owner's permissions: the catalog names exactly the plugin",
+      "folders that exist, each by its own string path, and a plugin folder installs nothing and links nowhere.",
+      "fix:   change the files named above, merge, and promote the new commit. `node tools/mods-gate.mjs <sha>` prints the same lines.");
+  }
+  const verdict = versionVerdict({ git, release, sha });
+  if (!verdict.ok) return verdict;
+
+  const tags = [];
+  for (const tag of verdict.tags) {
+    let there = "";
+    try {
+      there = (git("ls-remote", REMOTE, tag.ref).split("\n").filter(Boolean)[0] ?? "").split(/\s+/)[0];
+    } catch (error) {
+      return undecided(`CANNOT REACH ${REMOTE}`, firstLine(error.stderr) || firstLine(error.message),
+        "fix:   the tag of a raised version is looked up on the remote before anything is pushed; fix the connection and run again.");
+    }
+    if (there !== "" && there !== sha) {
+      return refused("TAG EXISTS",
+        `${tag.ref} is already at ${there}, and this promotion would put it at ${sha}.`,
+        "A version tag is made once and never moved: two commits cannot both be the one version a machine reports.",
+        `fix:   raise the version of ${tag.name} in plugins/${tag.name}/.claude-plugin/plugin.json above ${tag.version}, merge, and promote the new commit.`);
+    }
+    tags.push({ ...tag, exists: there === sha });
+  }
+  return { ok: true, tags, changed: verdict.changed };
+}
+
+/**
  * The whole judgement, and nothing else: no push, no output beyond `say`. Returns
- * `{ ok: true, sha, main, release, ahead, runs }` or `{ ok: false, code, headline, lines }`.
+ * `{ ok: true, sha, main, release, ahead, runs, tags, changed }` or `{ ok: false, code, headline, lines }`.
  */
 export async function decide({ sha: named, git, gh, repository, say = () => {} }) {
   if (!FULL_SHA.test(named)) {
@@ -363,6 +414,15 @@ export async function decide({ sha: named, git, gh, repository, say = () => {} }
   const local = standing({ sha, git, say });
   if (!local.ok) return local;
 
+  let gate;
+  try {
+    gate = modsGate({ sha, release: local.release, git });
+  } catch (error) {
+    return undecided("COMMIT NOT READABLE", firstLine(error.stderr) || firstLine(error.message),
+      `fix:   the layout and the versions are read from the objects of ${sha}; this checkout could not read them.`);
+  }
+  if (!gate.ok) return gate;
+
   say(`asking GitHub for \`${CI_WORKFLOW}\` runs of ${sha} in ${repository}`);
   const listing = await collectCiRuns(gh, repository, sha);
   if (listing.error !== undefined) {
@@ -378,7 +438,7 @@ export async function decide({ sha: named, git, gh, repository, say = () => {} }
   if (!verdict.ok) return verdict;
 
   const ahead = local.release === "" || local.release === sha ? 0 : Number(git("rev-list", "--count", `${local.release}..${sha}`));
-  return { ok: true, sha, main: local.main, release: local.release, ahead, runs: verdict.urls };
+  return { ok: true, sha, main: local.main, release: local.release, ahead, runs: verdict.urls, tags: gate.tags, changed: gate.changed };
 }
 
 /**
@@ -399,75 +459,110 @@ function report(decision, fail, afterPush = false) {
   return decision.code;
 }
 
+/** Which commit the gate itself is: the checkout, which can be older than the commit being promoted. */
+function gateLine(git, sha) {
+  try {
+    const head = git("rev-parse", "HEAD");
+    if (head === sha) return "gate: runs at the promoted commit";
+    const differing = git("diff", "--name-only", "--no-renames", head, sha, "--", "tools", ".github").split("\n").filter(Boolean);
+    return differing.length === 0
+      ? `gate: runs at ${head}; tools/ and .github/ are the same at ${sha}`
+      : `gate: runs at ${head}; tools/ and .github/ differ from ${sha} in: ${differing.join(", ")}`;
+  } catch (error) {
+    return `gate: could not compare the checkout with ${sha} (${firstLine(error.stderr) || firstLine(error.message)})`;
+  }
+}
+
+/** The tags that are pushed in this promotion: the raised versions whose tag does not exist yet. */
+const tagWords = (toPush) => (toPush.length === 0 ? "" : `, with the tag${toPush.length === 1 ? "" : "s"} ${toPush.map((t) => t.ref).join(", ")}`);
+
 /**
- * The side effect: judge, then push `<sha>:refs/heads/release` and confirm the remote agrees.
- * `--dry-run` stops after the judgement. Resolves to the exit code.
+ * The side effect: judge, then push `<sha>:refs/heads/release` — with the tag of every raised version, in ONE atomic
+ * push — and confirm the remote agrees on every ref. `--dry-run` stops after the judgement. Resolves to the exit code.
  */
 export async function promote({ sha, dryRun = false, git, gh, repository, log = console.log, fail = console.error }) {
-  const decision = await decide({ sha, git, gh, repository, say: (m) => log(`promote-release: ${m}`) });
+  const say = (m) => log(`promote-release: ${m}`);
+  const decision = await decide({ sha, git, gh, repository, say });
   if (!decision.ok) return report(decision, fail);
 
-  log(`promote-release: ${decision.sha} is on main, and its \`${CI_WORKFLOW}\` run is green (${decision.runs.join(", ")}).`);
+  say(`${decision.sha} is on main, and its \`${CI_WORKFLOW}\` run is green (${decision.runs.join(", ")}).`);
   if (decision.release === decision.sha) {
-    log(`promote-release: release is already ${decision.sha} — nothing to move, and nothing pushed.`);
+    say(`release is already ${decision.sha} — nothing to move, and nothing pushed.`);
     return EXIT.PROMOTED;
   }
 
+  const toPush = decision.tags.filter((t) => !t.exists);
+  const expected = [RELEASE_REF, ...decision.tags.map((t) => t.ref)];
+  const tagRefs = decision.tags.map((t) => t.ref);
   const movement = decision.release === ""
     ? `release does not exist yet; ${decision.sha} creates it`
     : `release ${decision.release} → ${decision.sha} (+${decision.ahead} commit(s))`;
+
+  say(decision.release === ""
+    ? `compare https://github.com/${repository}/commits/${decision.sha}`
+    : `compare https://github.com/${repository}/compare/${decision.release}...${decision.sha}`);
+  say(decision.changed.length === 0
+    ? "plugins: none changed"
+    : `plugins: ${decision.changed.map((c) => `${c.name} ${c.from ?? "none"} → ${c.to}, ${c.files.length} file(s)`).join("; ")}`);
+  say(gateLine(git, decision.sha));
+
   if (dryRun) {
-    log(`promote-release: DRY RUN — would push ${decision.sha}:${RELEASE_REF} to ${REMOTE}: ${movement}. Nothing pushed.`);
+    say(`DRY RUN — would push ${decision.sha}:${RELEASE_REF} to ${REMOTE}: ${movement}${tagWords(toPush)}. Nothing pushed.`);
     return EXIT.PROMOTED;
   }
 
-  log(`promote-release: pushing ${decision.sha}:${RELEASE_REF} to ${REMOTE} — ${movement}`);
+  say(`pushing ${decision.sha}:${RELEASE_REF} to ${REMOTE} — ${movement}${tagWords(toPush)}`);
+  const promoted = () => say(`PROMOTED — ${REMOTE}/release is ${decision.sha}${decision.tags.length === 0 ? "" : `, tagged ${decision.tags.map((t) => t.tag).join(", ")}`}. Machines pick it up at their next marketplace update.`);
   try {
-    git("push", REMOTE, `${decision.sha}:${RELEASE_REF}`);
+    // ONE atomic push: release and its tag land together or not at all, so a refused tag cannot leave a release
+    // that has no tag, and a refused release cannot leave a tag on a commit that never shipped.
+    git("push", "--atomic", REMOTE, `${decision.sha}:${RELEASE_REF}`, ...toPush.map((t) => `${decision.sha}:${t.ref}`));
   } catch (error) {
     // A push that errors has not necessarily failed: if the remote accepted the update and the
-    // connection dropped before the response arrived, the ref HAS moved and every consumer can
+    // connection dropped before the response arrived, the ref HAS moved and every machine can
     // already see it. Reporting that as "nothing was pushed" would send an operator to repair a
-    // state that is correct. So ask the remote where release is before concluding anything.
-    let landed = "";
-    let asked = true;
+    // state that is correct. So ask the remote where every pushed ref is before concluding anything.
+    let landed = null;
     try {
-      landed = remoteTips(git).get(RELEASE_REF) ?? "";
+      landed = remoteTips(git, tagRefs); // null stays null when the read-back ITSELF failed: nothing below may claim to know.
     } catch {
-      asked = false; // the read-back ITSELF failed: nothing below may claim to know where release is.
+      landed = null;
     }
-    if (asked && landed === decision.sha) {
-      log(`promote-release: the push reported an error, but ${REMOTE}/release IS ${decision.sha} — it landed before the connection broke.`);
-      log(`promote-release: PROMOTED — ${REMOTE}/release is ${decision.sha}. Consumers pick it up with \`git submodule update --remote\`.`);
+    if (landed !== null && expected.every((ref) => landed.get(ref) === decision.sha)) {
+      say(`the push reported an error, but ${REMOTE} has every ref at ${decision.sha} — it landed before the connection broke.`);
+      promoted();
       return EXIT.PROMOTED;
     }
+    const said = (ref) => landed.get(ref) || "(no such ref)";
     return report(undecided("PUSH REFUSED", firstLine(error.stderr) || firstLine(error.message),
-      asked
-        ? `${REMOTE} did not accept the update, and release is still ${landed || "(no such ref)"}.`
+      landed !== null
+        ? `${REMOTE} did not accept the update, and release is still ${said(RELEASE_REF)}.`
         : `${REMOTE} could not be asked where release is afterwards, so whether the update landed is UNKNOWN.`,
-      "A ruleset that denies pushes to release from anything but the workflow refuses exactly like this —",
+      ...(landed !== null ? [`read back: ${expected.map((ref) => `${ref} is ${said(ref)}`).join("; ")}.`] : []),
+      "A ruleset that denies pushes to release and to the version tags from anything but the workflow refuses exactly like this —",
       "which is the point of the ruleset; run the promotion through the workflow.",
-      asked
+      landed !== null
         ? "fix:   read the line above; this tool never adds --force, so a non-fast-forward refusal means release has moved on."
-        : `fix:   git ls-remote ${REMOTE} ${RELEASE_REF} — and compare with ${decision.sha} before doing anything else.`), fail, true);
+        : `fix:   git ls-remote ${REMOTE} ${expected.join(" ")} — and compare with ${decision.sha} before doing anything else.`), fail, true);
   }
 
-  let now = "";
+  let now;
   try {
-    now = remoteTips(git).get(RELEASE_REF) ?? "";
+    now = remoteTips(git, tagRefs);
   } catch (error) {
     return report(undecided("PUSH NOT CONFIRMED", firstLine(error.stderr) || firstLine(error.message),
-      `the push returned, but ${REMOTE} could not be asked where release is now.`,
-      `fix:   git ls-remote ${REMOTE} ${RELEASE_REF} — and compare with ${decision.sha}.`), fail, true);
+      `the push returned, but ${REMOTE} could not be asked where its refs are now.`,
+      `fix:   git ls-remote ${REMOTE} ${expected.join(" ")} — and compare with ${decision.sha}.`), fail, true);
   }
-  if (now !== decision.sha) {
+  const off = expected.filter((ref) => now.get(ref) !== decision.sha);
+  if (off.length > 0) {
     return report(undecided("PUSH NOT CONFIRMED",
-      `the push returned, but ${REMOTE} reports release at ${now || "(no such ref)"} rather than ${decision.sha}.`,
+      `the push returned, but ${REMOTE} reports ${off.map((ref) => `${ref} at ${now.get(ref) || "(no such ref)"}`).join(", ")} rather than ${decision.sha}.`,
       "Something else moved the ref in the same moment, or the remote lied; either way this run promoted nothing it can vouch for.",
-      `fix:   git ls-remote ${REMOTE} ${RELEASE_REF}, and run the promotion again once it is understood.`), fail, true);
+      `fix:   git ls-remote ${REMOTE} ${expected.join(" ")}, and run the promotion again once it is understood.`), fail, true);
   }
 
-  log(`promote-release: PROMOTED — ${REMOTE}/release is ${decision.sha}. Consumers pick it up with \`git submodule update --remote\`.`);
+  promoted();
   return EXIT.PROMOTED;
 }
 
