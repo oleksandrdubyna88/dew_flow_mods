@@ -29,7 +29,8 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { EXIT, RELEASE_REF, ciRunsFor, judgeRuns, repositorySlug } from "./promote-release.mjs";
-import { ownedDir } from "./lib/owned.mjs";
+import { FORBIDDEN_NAMES, layoutFindings } from "./mods-gate.mjs";
+import { ownedDir } from "../.agents/conventions/tools/lib/owned.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tool = path.join(here, "promote-release.mjs");
@@ -40,9 +41,48 @@ const SLUG = "example/conventions";
 const git = (cwd, ...args) =>
   execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 20000, windowsHide: true }).trim();
 
-const commit = (work, message) =>
-  git(work, "-c", "user.name=Release test", "-c", "user.email=release@example.invalid", "-c", "commit.gpgsign=false",
+/**
+ * Write files (a null value deletes one; `{ link }` is a symlink; `{ gitlink: true }` a nested repository, which
+ * `git add` records as a gitlink), then commit everything. With no files it is an empty commit, as before.
+ */
+function commit(work, message, files = {}) {
+  for (const [rel, text] of Object.entries(files)) {
+    const file = path.join(work, rel);
+    if (text === null) { fs.rmSync(file, { force: true }); continue; }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (typeof text === "object" && text.link !== undefined) fs.symlinkSync(text.link, file);
+    else if (typeof text === "object" && text.gitlink === true) {
+      fs.mkdirSync(file, { recursive: true });
+      execFileSync("git", ["init", "-q", file], { timeout: 20000 });
+      git(file, "-c", "user.name=Nested", "-c", "user.email=nested@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "nested");
+    } else fs.writeFileSync(file, text);
+  }
+  git(work, "add", "-A");
+  return git(work, "-c", "user.name=Release test", "-c", "user.email=release@example.invalid", "-c", "commit.gpgsign=false",
     "commit", "-q", "--allow-empty", "-m", message);
+}
+
+// ── the tree every commit of the fixture carries (this repository's layout: one catalog, one plugin) ──
+const MANIFEST = (name, version) => `${JSON.stringify({ name, version }, null, 2)}\n`;
+const CAT_ENTRY = (name) => ({ name, source: `./plugins/${name}`, description: `the ${name} mod` });
+const CATALOG = (plugins = [CAT_ENTRY("agent-models")], extra = {}) =>
+  `${JSON.stringify({ name: "dew-flow-mods", owner: { name: "owner" }, metadata: { description: "mods" }, plugins, ...extra }, null, 2)}\n`;
+const BASE_TREE = () => ({
+  "README.md": "a stub\n",
+  ".claude-plugin/marketplace.json": CATALOG(),
+  "plugins/agent-models/.claude-plugin/plugin.json": MANIFEST("agent-models", "1.6.0"),
+  "plugins/agent-models/hooks/hooks.json": "{}\n",
+  "plugins/agent-models/hooks/limits.tsx": "export const a = 1;\n",
+  "plugins/agent-models/tests/limits.test.tsx": "test\n",
+  "tools/x.mjs": "export {};\n",
+  ".github/workflows/ci.yml": "name: ci\n",
+});
+/** A second plugin: its entry is added to the catalog by the caller, its folder comes from here. */
+const PLUGIN_TREE = (name, version) => ({
+  [`plugins/${name}/.claude-plugin/plugin.json`]: MANIFEST(name, version),
+  [`plugins/${name}/hooks/hooks.json`]: "{}\n",
+});
+const TAG_160 = "refs/tags/agent-models--v1.6.0";
 
 function workspace(t) {
   const root = ownedDir(t, "promote-release");
@@ -61,22 +101,35 @@ function remote(root, name) {
   execFileSync("git", ["init", "-q", "--bare", "--initial-branch=main", url], { timeout: 20000 });
   const work = path.join(root, `${name}-work`);
   execFileSync("git", ["clone", "-q", url, work], { timeout: 20000 });
-  commit(work, "first — the published version");
+  commit(work, "first — the published version", BASE_TREE());
   const first = git(work, "rev-parse", "HEAD");
-  commit(work, "second — written since");
+  commit(work, "second — written since", { "README.md": "a stub, written since\n" });
   const second = git(work, "rev-parse", "HEAD");
   git(work, "checkout", "-q", "-b", "topic");
-  commit(work, "on a branch, never merged");
+  commit(work, "on a branch, never merged", { "topic.txt": "topic\n" });
   const topic = git(work, "rev-parse", "HEAD");
   git(work, "checkout", "-q", "-b", "stray", first);
-  commit(work, "beside main — shares only the first commit with it");
+  commit(work, "beside main — shares only the first commit with it", { "stray.txt": "stray\n" });
   const stray = git(work, "rev-parse", "HEAD");
   git(work, "checkout", "-q", "main");
   git(work, "push", "-q", "origin", "main", "topic", "stray");
   const release = (sha) => git(work, "push", "-q", "origin", `${sha}:${RELEASE_REF}`);
   const releaseAt = () => git(work, "ls-remote", url, RELEASE_REF).split(/\s+/)[0] ?? "";
   const refs = () => git(work, "ls-remote", "--refs", url).split("\n").filter(Boolean).map((l) => l.split(/\s+/)[1]).sort();
-  return { url, work, first, second, topic, stray, release, releaseAt, refs };
+  /** The sha a remote ref has, or "" (any ref, a tag in full). */
+  const refAt = (ref) => git(work, "ls-remote", url, ref).split(/\s+/)[0] ?? "";
+  /** ls-remote's own lines for the ref: a lightweight tag has one, an annotated one has a second `^{}` line. */
+  const refLines = (ref) => git(work, "ls-remote", url, ref, `${ref}^{}`).split("\n").filter(Boolean);
+  /** A commit on main with these files (null deletes), pushed; the checkout the workflow made fetches it itself. */
+  const advance = (files, message = "written later") => {
+    git(work, "checkout", "-q", "main");
+    commit(work, message, files);
+    git(work, "push", "-q", "origin", "main");
+    return git(work, "rev-parse", "HEAD");
+  };
+  /** A tag at a sha, pushed straight to the remote. */
+  const tag = (name, sha) => git(work, "push", "-q", "origin", `${sha}:refs/tags/${name}`);
+  return { url, work, first, second, topic, stray, release, releaseAt, refs, refAt, refLines, advance, tag };
 }
 
 /** The workflow's checkout: a full clone of the remote, which is what the tool runs in. */
@@ -142,6 +195,7 @@ const ciRun = (sha, overrides = {}) => ({
   name: "ci",
   path: ".github/workflows/ci.yml",
   head_sha: sha,
+  head_branch: "main",
   event: "push",
   status: "completed",
   conclusion: "success",
@@ -304,7 +358,7 @@ test("a green ci run for a different sha does not vouch for this one", (t) => {
 
 test("two ci runs for one sha must both be green — a failed twin is not outvoted", (t) => {
   const s = scene(t);
-  s.github.lists([ciRun(s.rules.first), ciRun(s.rules.first, { id: 4243, event: "workflow_dispatch", conclusion: "failure" })]);
+  s.github.lists([ciRun(s.rules.first), ciRun(s.rules.first, { id: 4243, conclusion: "failure" })]);
   const { code, out } = s.promote([s.rules.first]);
   assert.equal(code, EXIT.REFUSED, out);
   assert.match(out, /REFUSED — CI NOT GREEN/, out);
@@ -321,7 +375,9 @@ test("the happy path pushes exactly refs/heads/release at the promoted sha, and 
   assert.equal(code, EXIT.PROMOTED, out);
   assert.match(out, new RegExp(`PROMOTED — origin/release is ${s.rules.first}`), out);
   assert.equal(s.rules.releaseAt(), s.rules.first, "release is the promoted commit");
-  assert.deepEqual(s.rules.refs(), [...before, RELEASE_REF].sort(), "one branch appeared and nothing else moved — no tag, no main, no topic");
+  // The first commit carries the plugin at 1.6.0 and `release` does not exist: the first promotion of a plugin
+  // creates its tag too, in the same atomic push (G6).
+  assert.deepEqual(s.rules.refs(), [...before, RELEASE_REF, TAG_160].sort(), "a branch and the plugin's tag appeared, nothing else moved");
   assert.equal(git(s.rules.work, "ls-remote", s.rules.url, "refs/heads/main").split(/\s+/)[0], s.rules.second, "main is untouched");
   assert.deepEqual(s.github.calls(), [runsQuery(s.rules.first)], "one question, about this sha, in this repository");
 });
@@ -596,4 +652,313 @@ test("a refused push says where release actually is, instead of only that nothin
   assert.match(out, /PUSH REFUSED/, out);
   assert.match(out, new RegExp(`release is still ${s.rules.first}`), out);
   assert.equal(s.rules.releaseAt(), s.rules.first, "the ref really did not move");
+});
+
+// ══ story 2.2 of the move: this repository's gate. G1–G9 and the dry run (the workflows are tools/workflows.test.mjs) ══
+
+const TAG = (version) => `refs/tags/agent-models--v${version}`;
+const hookChange = (n = 2) => ({ "plugins/agent-models/hooks/limits.tsx": `export const a = ${n};\n` });
+const bump = (version) => ({ "plugins/agent-models/.claude-plugin/plugin.json": MANIFEST("agent-models", version) });
+const tagRefs = (s) => s.rules.refs().filter((r) => r.startsWith("refs/tags/"));
+const MODS_GATE = path.join(here, "mods-gate.mjs");
+
+/** `release` at one of the fixture's commits, main one commit on with these files, and a green ci run for it. */
+function moved(t, files, at = "second") {
+  const s = scene(t);
+  s.rules.release(s.rules[at]);
+  const sha = s.rules.advance(files);
+  s.github.lists([ciRun(sha)]);
+  return { s, sha };
+}
+
+test("the fixture's first commit is a valid layout: the layout findings of a good tree are none", (t) => {
+  const rules = remote(workspace(t), "layout-good");
+  assert.deepEqual(layoutFindings({ git: (...args) => git(rules.work, ...args), rev: rules.first }), []);
+  assert.deepEqual(layoutFindings({ git: (...args) => git(rules.work, ...args), rev: rules.second }), []);
+});
+
+// ── G1: the shape of the argument ────────────────────────────────────────────────────────────────
+
+test("G1: 39 characters, a branch name and HEAD are not a sha — GitHub is not asked and no ref moves", (t) => {
+  const s = scene(t);
+  s.github.lists([ciRun(s.rules.first)]);
+  const before = s.rules.refs();
+  for (const named of [s.rules.first.slice(0, 39), "main", "HEAD"]) {
+    const { code, out } = s.promote([named]);
+    assert.equal(code, EXIT.REFUSED, out);
+    assert.match(out, /REFUSED — NOT A SHA/, out);
+  }
+  assert.deepEqual(s.github.calls(), []);
+  assert.deepEqual(s.rules.refs(), before, "the remote's refs are unchanged");
+});
+
+// ── G3: only a push run of ci on main is evidence ────────────────────────────────────────────────
+
+test("G3: a ci run of another event or another branch is no evidence; a cancelled push run is not green", (t) => {
+  const s = scene(t);
+  for (const odd of [{ event: "workflow_dispatch" }, { event: "pull_request" }, { event: "schedule" }, { head_branch: "topic" }]) {
+    s.github.lists([ciRun(s.rules.first, odd)]);
+    const { code, out } = s.promote([s.rules.first]);
+    assert.equal(code, EXIT.REFUSED, out);
+    assert.match(out, /REFUSED — NO CI RUN/, `${JSON.stringify(odd)}: ${out}`);
+  }
+  // the repository's ci has cancel-in-progress: a cancelled push run is a run, and it is not green
+  s.github.lists([ciRun(s.rules.first, { conclusion: "cancelled" }), ciRun(s.rules.first, { id: 1, event: "workflow_dispatch" })]);
+  const cancelled = s.promote([s.rules.first]);
+  assert.equal(cancelled.code, EXIT.REFUSED, cancelled.out);
+  assert.match(cancelled.out, /REFUSED — CI NOT GREEN/, cancelled.out);
+  assert.match(cancelled.out, /conclusion cancelled/, cancelled.out);
+  // a red run of another event beside the green push run is not the judge's concern
+  s.github.lists([ciRun(s.rules.first), ciRun(s.rules.first, { id: 2, event: "pull_request", conclusion: "failure" })]);
+  const ok = s.promote([s.rules.first, "--dry-run"]);
+  assert.equal(ok.code, EXIT.PROMOTED, ok.out);
+  assert.equal(s.rules.releaseAt(), "");
+});
+
+test("G3: ciRunsFor keeps only the ci runs of event push on main for the sha", () => {
+  const sha = "a".repeat(40);
+  const listing = JSON.stringify({ total_count: 5, workflow_runs: [
+    ciRun(sha, { id: 1 }),
+    ciRun(sha, { id: 2, event: "workflow_dispatch" }),
+    ciRun(sha, { id: 3, event: "pull_request" }),
+    ciRun(sha, { id: 4, head_branch: "feature" }),
+    ciRun(sha, { id: 5, head_branch: undefined }),
+  ] });
+  assert.deepEqual(ciRunsFor(listing, sha).runs.map((r) => r.id), [1]);
+});
+
+// ── G5: a change to a plugin needs a higher version ──────────────────────────────────────────────
+
+test("G5: a plugin file changed and the version equal or lower: VERSION NOT RAISED, with the plugin, both versions and the paths", (t) => {
+  for (const [label, files, shown] of [
+    ["a hook, version equal", hookChange(), "plugins/agent-models/hooks/limits.tsx"],
+    ["a hook, version lower", { ...hookChange(), ...bump("1.5.9") }, "plugins/agent-models/hooks/limits.tsx"],
+    ["only a test file, version equal", { "plugins/agent-models/tests/limits.test.tsx": "changed\n" }, "plugins/agent-models/tests/limits.test.tsx"],
+  ]) {
+    const { s, sha } = moved(t, files);
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${label}: ${out}`);
+    assert.match(out, /REFUSED — VERSION NOT RAISED/, `${label}: ${out}`);
+    assert.match(out, /agent-models/, out);
+    assert.match(out, /release has [^\s]*1\.6\.0/, `${label}: ${out}`);
+    assert.ok(out.includes(shown), `${label}: the changed path is named: ${out}`);
+    assert.deepEqual(s.github.calls(), [], `${label}: GitHub is not asked`);
+    assert.equal(s.rules.releaseAt(), s.rules.second, `${label}: release did not move`);
+    assert.deepEqual(tagRefs(s), [], `${label}: no tag`);
+  }
+});
+
+test("G5: the changed paths are the first five and the count", (t) => {
+  const many = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`plugins/agent-models/hooks/h${i}.tsx`, `${i}\n`]));
+  const { s, sha } = moved(t, many);
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.REFUSED, out);
+  assert.match(out, /7 file\(s\) changed/, out);
+  assert.equal([...out.matchAll(/plugins\/agent-models\/hooks\/h\d\.tsx/g)].length, 5, out);
+  assert.match(out, /and 2 more/, out);
+});
+
+test("G5: a version that is not major.minor.patch is a LAYOUT finding, not a version verdict", (t) => {
+  for (const bad of ["1.6", "1.6.1-rc1", "v1.6.1", "1.6.1.0"]) {
+    const { s, sha } = moved(t, { ...hookChange(), ...bump(bad) });
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${bad}: ${out}`);
+    assert.match(out, /REFUSED — LAYOUT/, `${bad}: ${out}`);
+    assert.match(out, /plugins\/agent-models\/\.claude-plugin\/plugin\.json: version "[^"]*" is not/, `${bad}: ${out}`);
+    assert.deepEqual(s.github.calls(), []);
+    assert.equal(s.rules.releaseAt(), s.rules.second);
+  }
+});
+
+// ── G6: a raised version moves release and creates the tag in one push ───────────────────────────
+
+test("G6: 1.6.0 → 1.6.1 moves release and creates the lightweight tag at the same sha, and no other ref", (t) => {
+  const { s, sha } = moved(t, { ...hookChange(), ...bump("1.6.1") });
+  const before = s.rules.refs();
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  assert.equal(s.rules.releaseAt(), sha);
+  assert.equal(s.rules.refAt(TAG("1.6.1")), sha);
+  assert.equal(s.rules.refLines(TAG("1.6.1")).length, 1, "lightweight: no peeled line");
+  assert.deepEqual(s.rules.refs(), [...before, TAG("1.6.1")].sort(), "exactly one new ref");
+  assert.match(out, new RegExp(`PROMOTED — origin/release is ${sha}`), out);
+});
+
+test("G6: 1.9.0 → 1.10.0 is a raise — a string compare would refuse it", (t) => {
+  const s = scene(t);
+  const nine = s.rules.advance({ ...hookChange(3), ...bump("1.9.0") });
+  s.rules.release(nine);
+  const ten = s.rules.advance({ ...hookChange(4), ...bump("1.10.0") });
+  s.github.lists([ciRun(ten)]);
+  const { code, out } = s.promote([ten]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  assert.equal(s.rules.releaseAt(), ten);
+  assert.equal(s.rules.refAt(TAG("1.10.0")), ten);
+});
+
+test("G6: with no release yet every plugin of the commit is new: release and the tag of its version appear together", (t) => {
+  const s = scene(t);
+  s.github.lists([ciRun(s.rules.first)]);
+  const before = s.rules.refs();
+  const { code, out } = s.promote([s.rules.first]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  assert.equal(s.rules.releaseAt(), s.rules.first);
+  assert.equal(s.rules.refAt(TAG("1.6.0")), s.rules.first);
+  assert.deepEqual(s.rules.refs(), [...before, RELEASE_REF, TAG("1.6.0")].sort());
+});
+
+// ── G7: the tag ──────────────────────────────────────────────────────────────────────────────────
+
+test("G7a: a tag that exists at another sha is refused, both shas are named, and nothing is pushed", (t) => {
+  const { s, sha } = moved(t, { ...hookChange(), ...bump("1.6.1") });
+  s.rules.tag("agent-models--v1.6.1", s.rules.first);
+  const before = s.rules.refs();
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.REFUSED, out);
+  assert.match(out, /REFUSED — TAG EXISTS/, out);
+  assert.ok(out.includes(s.rules.first) && out.includes(sha), out);
+  assert.deepEqual(s.rules.refs(), before);
+  assert.equal(s.rules.releaseAt(), s.rules.second);
+});
+
+test("G7b: a remote that refuses the tag ref refuses the whole push (atomic): release does not move, and the read-back names both refs", (t) => {
+  const { s, sha } = moved(t, { ...hookChange(), ...bump("1.6.1") });
+  // An `update` hook judges each ref on its own: without --atomic release would move and only the tag would fail.
+  const hook = path.join(s.rules.url, "hooks", "update");
+  fs.writeFileSync(hook, ["#!/bin/sh", 'case "$1" in refs/tags/*) echo "no tags here" >&2; exit 1;; esac', "exit 0", ""].join("\n"));
+  fs.chmodSync(hook, 0o755);
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.UNDECIDED, out);
+  assert.match(out, /PUSH REFUSED/, out);
+  assert.equal(s.rules.releaseAt(), s.rules.second, "release did NOT move");
+  assert.equal(s.rules.refAt(TAG("1.6.1")), "", "the tag did not appear");
+  assert.ok(out.includes("refs/heads/release") && out.includes(TAG("1.6.1")), `the read-back names both refs: ${out}`);
+});
+
+// ── G8: a change outside plugins/ is a release without a tag ─────────────────────────────────────
+
+test("G8: only README.md, .github/ and tools/ changed: release moves, no tag, and the line says so", (t) => {
+  const { s, sha } = moved(t, { "README.md": "new words\n", ".github/workflows/ci.yml": "name: ci\n# edited\n", "tools/x.mjs": "export const x = 1;\n" });
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  assert.equal(s.rules.releaseAt(), sha);
+  assert.deepEqual(tagRefs(s), [], "no tag ref");
+  assert.match(out, /plugins: none changed/, out);
+});
+
+// ── the dry run ──────────────────────────────────────────────────────────────────────────────────
+
+test("dry: G6's scene with --dry-run pushes nothing and prints the four lines", (t) => {
+  const { s, sha } = moved(t, { ...hookChange(), ...bump("1.6.1"), "tools/x.mjs": "export const x = 1;\n" });
+  const before = s.rules.refs();
+  const { code, out } = s.promote([sha, "--dry-run"]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  assert.deepEqual(s.rules.refs(), before, "a dry run pushes nothing");
+  const lines = out.split("\n");
+  assert.ok(lines.includes(`promote-release: DRY RUN — would push ${sha}:refs/heads/release to origin: release ${s.rules.second} → ${sha} (+1 commit(s)), with the tag ${TAG("1.6.1")}. Nothing pushed.`), out);
+  assert.ok(lines.includes(`promote-release: compare https://github.com/${SLUG}/compare/${s.rules.second}...${sha}`), out);
+  assert.ok(lines.includes("promote-release: plugins: agent-models 1.6.0 → 1.6.1, 2 file(s)"), out);
+  assert.ok(lines.includes(`promote-release: gate: runs at ${s.rules.second}; tools/ and .github/ differ from ${sha} in: tools/x.mjs`), out);
+  assert.doesNotMatch(out, /PROMOTED/, out);
+
+  // the checkout is the promoted commit: the gate is the promoted commit's own
+  const late = path.join(s.root, "runner-late");
+  execFileSync("git", ["clone", "-q", s.rules.url, late], { timeout: 20000 });
+  const again = run(late, [sha, "--dry-run"], s.env);
+  assert.equal(again.code, EXIT.PROMOTED, again.out);
+  assert.ok(again.out.split("\n").includes("promote-release: gate: runs at the promoted commit"), again.out);
+});
+
+test("dry: with no release yet the compare line is the commit's own and every plugin is new", (t) => {
+  const s = scene(t);
+  s.github.lists([ciRun(s.rules.first)]);
+  const { code, out } = s.promote([s.rules.first, "--dry-run"]);
+  assert.equal(code, EXIT.PROMOTED, out);
+  const lines = out.split("\n");
+  assert.ok(lines.includes(`promote-release: compare https://github.com/${SLUG}/commits/${s.rules.first}`), out);
+  assert.ok(lines.includes("promote-release: plugins: agent-models none → 1.6.0, 3 file(s)"), out);
+});
+
+// ── G9: the layout of the commit ─────────────────────────────────────────────────────────────────
+
+const GOOD_SOURCE = "./plugins/agent-models";
+const entryWith = (patch) => ({ ...CAT_ENTRY("agent-models"), ...patch });
+const SOURCE_RE = /\.claude-plugin\/marketplace\.json: plugins\[0\] "agent-models": source must be the string "\.\/plugins\/agent-models"/;
+const FORBID_RE = (p) => new RegExp(`${p.replaceAll(".", "\\.")}: a plugin folder holds no package\\.json, lockfile or node_modules`);
+const MARKET = ".claude-plugin/marketplace.json";
+
+const LAYOUT_CASES = [
+  ["a package.json in a plugin folder", { "plugins/agent-models/package.json": "{}\n" }, [FORBID_RE("plugins/agent-models/package.json")]],
+  ["a node_modules folder in a plugin", { "plugins/agent-models/node_modules/x/index.js": "x\n" }, [FORBID_RE("plugins/agent-models/node_modules/x/index.js")]],
+  ...FORBIDDEN_NAMES.map((name) => [`${name} in a plugin folder`, { [`plugins/agent-models/hooks/${name}`]: "x\n" }, [FORBID_RE(`plugins/agent-models/hooks/${name}`)]]),
+  ["a symlink under plugins/", { "plugins/agent-models/hooks/link": { link: "../../../README.md" } }, [/plugins\/agent-models\/hooks\/link: a symlink \(mode 120000\)/]],
+  ["a gitlink under plugins/", { "plugins/agent-models/sub": { gitlink: true } }, [/plugins\/agent-models\/sub: a gitlink \(mode 160000\)/]],
+  ["an entry with a fourth key", { [MARKET]: CATALOG([entryWith({ homepage: "https://example.invalid" })]) }, [/marketplace\.json: plugins\[0\] has the key "homepage"; an entry is exactly name, source, description/]],
+  ["an entry name that is not the manifest name", { "plugins/agent-models/.claude-plugin/plugin.json": MANIFEST("other", "1.6.0") }, [/plugins\/agent-models\/\.claude-plugin\/plugin\.json: name is "other" but the catalog entry is "agent-models"/]],
+  ["source an object (github)", { [MARKET]: CATALOG([entryWith({ source: { source: "github", repo: "example/mods" } })]) }, [SOURCE_RE]],
+  ["source an object (git-subdir with the right URL)", { [MARKET]: CATALOG([entryWith({ source: { source: "git-subdir", url: "https://github.com/example/conventions.git", path: "plugins/agent-models" } })]) }, [SOURCE_RE]],
+  ["source ./plugins/other", { [MARKET]: CATALOG([entryWith({ source: "./plugins/other" })]) }, [SOURCE_RE]],
+  ["source without ./", { [MARKET]: CATALOG([entryWith({ source: "plugins/agent-models" })]) }, [SOURCE_RE]],
+  ["source with a trailing slash", { [MARKET]: CATALOG([entryWith({ source: `${GOOD_SOURCE}/` })]) }, [SOURCE_RE]],
+  ["source with ..", { [MARKET]: CATALOG([entryWith({ source: "./plugins/../plugins/agent-models" })]) }, [SOURCE_RE]],
+  ["metadata.pluginRoot", { [MARKET]: CATALOG(undefined, { metadata: { description: "mods", pluginRoot: "./plugins" } }) }, [/marketplace\.json: metadata has the key "pluginRoot"; only description is allowed/]],
+  ["an unknown top-level key", { [MARKET]: CATALOG(undefined, { strict: false }) }, [/marketplace\.json: unknown top-level key "strict"/]],
+  ["a marketplace name that is not dew-flow-mods", { [MARKET]: CATALOG(undefined, { name: "other-mods" }) }, [/marketplace\.json: name is "other-mods", it must be "dew-flow-mods"/]],
+  ["a plugin folder with no entry", PLUGIN_TREE("extra", "1.0.0"), [/plugins\/extra: a plugin folder with no catalog entry/]],
+  ["an entry with no folder", { [MARKET]: CATALOG([CAT_ENTRY("agent-models"), CAT_ENTRY("ghost")]) }, [/marketplace\.json: plugins\[1\] "ghost": there is no folder plugins\/ghost/]],
+  ["two entries of one name", { [MARKET]: CATALOG([CAT_ENTRY("agent-models"), CAT_ENTRY("agent-models")]) }, [/marketplace\.json: plugins\[1\] repeats the name "agent-models"/]],
+  ["unparsable catalog JSON", { [MARKET]: "{ nope" }, [/marketplace\.json: not JSON/]],
+  ["unparsable manifest JSON", { "plugins/agent-models/.claude-plugin/plugin.json": "{ nope" }, [/plugins\/agent-models\/\.claude-plugin\/plugin\.json: not JSON/]],
+];
+
+test("G9: each defect of the layout is a LAYOUT refusal that names path and reason; nothing is pushed", (t) => {
+  for (const [label, files, expected] of LAYOUT_CASES) {
+    const { s, sha } = moved(t, files, "first");
+    const before = s.rules.refs();
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${label}: ${out}`);
+    assert.match(out, /REFUSED — LAYOUT/, `${label}: ${out}`);
+    for (const re of expected) assert.match(out, re, `${label}: ${out}`);
+    assert.deepEqual(s.github.calls(), [], `${label}: GitHub is not asked`);
+    assert.deepEqual(s.rules.refs(), before, `${label}: nothing pushed`);
+  }
+});
+
+test("G9: a plugin that release has and the commit has not is a LAYOUT finding", (t) => {
+  const s = scene(t);
+  const both = s.rules.advance({ ...PLUGIN_TREE("extra", "1.0.0"), [MARKET]: CATALOG([CAT_ENTRY("agent-models"), CAT_ENTRY("extra")]) });
+  s.rules.release(both);
+  const without = s.rules.advance({ "plugins/extra/.claude-plugin/plugin.json": null, "plugins/extra/hooks/hooks.json": null, [MARKET]: CATALOG() });
+  s.github.lists([ciRun(without)]);
+  const { code, out } = s.promote([without]);
+  assert.equal(code, EXIT.REFUSED, out);
+  assert.match(out, /REFUSED — LAYOUT/, out);
+  assert.match(out, /plugins\/extra: release has this plugin and this commit has not/, out);
+  assert.equal(s.rules.releaseAt(), both);
+});
+
+test("G9: every finding of the commit is printed — three defects print three lines", (t) => {
+  const defects = {
+    "plugins/agent-models/package.json": "{}\n",
+    [MARKET]: CATALOG([entryWith({ homepage: "x" })], { metadata: { description: "mods", pluginRoot: "./plugins" } }),
+  };
+  const { s, sha } = moved(t, defects, "first");
+  const { code, out } = s.promote([sha]);
+  assert.equal(code, EXIT.REFUSED, out);
+  const found = out.split("\n").filter((l) => /^ {2}(\.claude-plugin|plugins)\/\S*: /.test(l));
+  assert.equal(found.length, 3, out);
+
+  // the standalone gate prints the same lines and exits 1
+  git(s.runner, "fetch", "-q", "origin", "main");
+  const cli = spawnSync(process.execPath, [MODS_GATE, sha], { cwd: s.runner, encoding: "utf8", timeout: 60000 });
+  const cliOut = `${cli.stdout}${cli.stderr}`;
+  assert.equal(cli.status, 1, cliOut);
+  for (const line of found) assert.ok(cliOut.includes(line.trim()), `${line.trim()} is in the gate's own output: ${cliOut}`);
+});
+
+test("G9: the standalone gate on this repository's HEAD exits 0 and says how many plugins it read", () => {
+  const root = path.join(here, "..");
+  const cli = spawnSync(process.execPath, [MODS_GATE], { cwd: root, encoding: "utf8", timeout: 60000 });
+  assert.equal(cli.status, 0, `${cli.stdout}${cli.stderr}`);
+  assert.match(cli.stdout, /1 plugin read/, cli.stdout);
 });
