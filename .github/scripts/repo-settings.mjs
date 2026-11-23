@@ -62,7 +62,7 @@ const stripNotes = (value) => {
   return value;
 };
 
-/** The data, read from `root`: every ruleset file, the settings file, the catalog the tag patterns follow. */
+/** The data, read from `root`: every ruleset file, the settings file, the catalog. */
 export function loadData(root = ROOT) {
   const rulesetDir = path.join(root, '.github', 'rulesets');
   const rulesets = fs.readdirSync(rulesetDir).filter((f) => f.endsWith('.json')).sort()
@@ -75,7 +75,7 @@ export function loadData(root = ROOT) {
 /**
  * D1: what the data must be before anything is compared with it. Returns the findings (empty is good).
  * Every bypass list is empty or exactly the deploy key (and only the two `move` rulesets have it); every ruleset is
- * `active`; for each plugin of the catalog the tag pattern is in BOTH tag rulesets.
+ * `active`; both tag rulesets cover every tag (`~ALL`); each ruleset has its exact rule types and an empty exclude.
  */
 export function validateData({ rulesets, settings, catalog }) {
   const findings = [];
@@ -103,12 +103,11 @@ export function validateData({ rulesets, settings, catalog }) {
   for (const name of MAY_BYPASS) {
     if (byName.get(name)?.bypass_actors?.length !== 1) findings.push(`${name}: the ruleset is missing, or it lacks the DeployKey bypass that lets the promotion move the ref`);
   }
-  for (const plugin of catalog.plugins ?? []) {
-    const pattern = `refs/tags/${plugin.name}--v*`;
-    for (const name of ['tags-create', 'tags-fixed']) {
-      const include = byName.get(name)?.conditions?.ref_name?.include ?? [];
-      if (!include.includes(pattern)) findings.push(`${name}: the pattern ${pattern} of the plugin ${plugin.name} is not in conditions.ref_name.include`);
-    }
+  // EVERY tag, not a pattern per plugin: a pattern covers only the names it spells, and `git fetch origin release` or
+  // `git clone --branch release` takes a TAG named release when one exists. Nobody but the deploy key creates a tag.
+  for (const name of ['tags-create', 'tags-fixed']) {
+    const include = byName.get(name)?.conditions?.ref_name?.include;
+    if (!same(include, ['~ALL'])) findings.push(`${name}: conditions.ref_name.include is ${JSON.stringify(include)}, it must be ["~ALL"]: every tag, not a pattern`);
   }
   const env = settings.environment ?? {};
   if (!Array.isArray(env.reviewers) || env.reviewers.length !== 1) findings.push('settings.json: the environment has exactly one reviewer, the owner');

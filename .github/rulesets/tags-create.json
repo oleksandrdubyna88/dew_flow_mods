@@ -1,9 +1,9 @@
 {
-  "$note": "A version tag <plugin>--v<version> is CREATED only by the deploy key of the `release` environment. One pattern for each plugin of the catalog: a new plugin adds its pattern here and in tags-fixed.json (repo-settings.test.mjs D1 reads the catalog and fails until it does).",
+  "$note": "EVERY tag is CREATED only by the deploy key of the `release` environment (include ~ALL, not a pattern per plugin): a pattern covers only the names it spells, and a tag named `release` would be taken by `git fetch origin release` in place of the branch. A new plugin needs no change here; repo-settings.test.mjs D1 asserts ~ALL.",
   "name": "tags-create",
   "target": "tag",
   "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/tags/agent-models--v*"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
   "bypass_actors": [{ "actor_id": null, "actor_type": "DeployKey", "bypass_mode": "always" }],
   "rules": [
     { "type": "creation" }

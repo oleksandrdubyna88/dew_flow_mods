@@ -118,15 +118,19 @@ describe('D1 the data files', () => {
     assert.match(find((d) => { by(d, 'main').name = 'other'; }), /is not one of/);
   });
 
-  it('for each plugin of the catalog the tag pattern is in both tag rulesets', () => {
-    const d = clone(loadData());
-    d.catalog.plugins.push({ name: 'second-mod', source: './plugins/second-mod', description: 'x' });
-    const found = validateData(d).join('\n');
-    assert.match(found, /tags-create: the pattern refs\/tags\/second-mod--v\* of the plugin second-mod is not in/);
-    assert.match(found, /tags-fixed: the pattern refs\/tags\/second-mod--v\* of the plugin second-mod is not in/);
-    const e = clone(loadData());
-    e.rulesets.find((r) => r.body.name === 'tags-fixed').body.conditions.ref_name.include = [];
-    assert.match(validateData(e).join('\n'), /tags-fixed: the pattern refs\/tags\/agent-models--v\*/);
+  it('both tag rulesets cover EVERY tag (~ALL), not a pattern per plugin: a tag named release must not be creatable by anyone with write', () => {
+    const d = loadData();
+    const by = Object.fromEntries(d.rulesets.map((r) => [r.body.name, r.body]));
+    for (const name of ['tags-create', 'tags-fixed']) assert.deepEqual(by[name].conditions.ref_name.include, ['~ALL'], name);
+    const find = (patch) => { const e = clone(loadData()); patch(e); return validateData(e).join('\n'); };
+    for (const name of ['tags-create', 'tags-fixed']) {
+      assert.match(find((e) => { e.rulesets.find((r) => r.body.name === name).body.conditions.ref_name.include = ['refs/tags/agent-models--v*']; }), new RegExp(`${name}: conditions\\.ref_name\\.include is \\["refs/tags/agent-models--v\\*"\\], it must be \\["~ALL"\\]`));
+      assert.match(find((e) => { e.rulesets.find((r) => r.body.name === name).body.conditions.ref_name.include = []; }), new RegExp(`${name}: conditions\\.ref_name\\.include`));
+    }
+    // A second plugin needs no new pattern: ~ALL already covers its tags.
+    const second = clone(loadData());
+    second.catalog.plugins.push({ name: 'second-mod', source: './plugins/second-mod', description: 'x' });
+    assert.deepEqual(validateData(second), []);
   });
 });
 
