@@ -90,6 +90,23 @@ export function loadData(root = ROOT) {
 }
 
 /**
+ * The data is written in the form GitHub reads back, so a read-back that differs is a real difference: a pull_request
+ * rule carries the two server defaults, and an update rule has no parameters (GitHub drops a false-only object).
+ */
+function canonicalFindings(file, body) {
+  const out = [];
+  for (const rule of body.rules ?? []) {
+    if (rule.type === 'update' && 'parameters' in rule) out.push(`${file}: ${body.name}: the update rule has parameters; GitHub drops a false-only object, so write the rule without them`);
+    if (rule.type === 'pull_request') {
+      const p = rule.parameters ?? {};
+      if (!same(p.required_reviewers, [])) out.push(`${file}: ${body.name}: pull_request.required_reviewers is ${JSON.stringify(p.required_reviewers)}, GitHub's form is []`);
+      if (p.require_extra_approval_for_unattributed_changes !== true) out.push(`${file}: ${body.name}: pull_request.require_extra_approval_for_unattributed_changes is ${JSON.stringify(p.require_extra_approval_for_unattributed_changes)}, GitHub's form is true`);
+    }
+  }
+  return out;
+}
+
+/**
  * D1: what the data must be before anything is compared with it. Returns the findings (empty is good).
  * Every bypass list is empty or exactly the deploy key (and only the two `move` rulesets have it); every ruleset is
  * `active`; every named ruleset is present, on its own target and exactly its own include (both tag rulesets cover
@@ -116,6 +133,7 @@ export function validateData({ rulesets, settings, catalog }) {
       const types = sorted((body.rules ?? []).map((r) => r.type));
       if (!same(types, RULE_TYPES[body.name])) findings.push(`${file}: ${body.name}: the rule types are ${JSON.stringify(types)}, they must be ${JSON.stringify(RULE_TYPES[body.name])}`);
     }
+    findings.push(...canonicalFindings(file, body));
     const exclude = body.conditions?.ref_name?.exclude;
     if (!same(exclude, [])) findings.push(`${file}: ${body.name}: conditions.ref_name.exclude is ${JSON.stringify(exclude)}, it must be []: an exclude takes refs out of the rules`);
   }
@@ -199,7 +217,8 @@ export function normaliseRuleset(body) {
         .sort((a, b) => (a.context < b.context ? -1 : Number(a.context > b.context)));
     }
     if (Array.isArray(out.allowed_merge_methods)) out.allowed_merge_methods = sorted(out.allowed_merge_methods);
-    return out;
+    // GitHub answers its keys in its own order; the order of a parameter object is not a difference.
+    return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : Number(a > b))));
   };
   const ref = body.conditions?.ref_name ?? {};
   return {
