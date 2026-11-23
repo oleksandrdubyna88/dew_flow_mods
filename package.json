@@ -1,0 +1,16 @@
+{
+  "name": "dew-flow-mods",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code mods of the dew_flow family: a plugin marketplace (agent-models). The package is the repository's own tools and the pinned Claude Code CLI; no plugin installs a dependency.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"tools/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.330"
+  }
+}
