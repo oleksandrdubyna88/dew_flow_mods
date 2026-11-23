@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { ownedDir } from '../.agents/conventions/tools/lib/owned.mjs';
-import { DEPLOY_KEY_ACTOR, EXIT, ROOT, loadData, main, planApply, readBack, validateData } from '../.github/scripts/repo-settings.mjs';
+import { DEPLOY_KEY_ACTOR, EXIT, ROOT, ghLauncher, loadData, main, planApply, readBack, validateData } from '../.github/scripts/repo-settings.mjs';
 
 const REPO = 'example/mods';
 const FAKE_KEY = 'ssh-ed25519 AAAAC3NzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE';
@@ -404,5 +405,41 @@ describe('D7 the Actions settings', () => {
     const plan = await planApply({ data: d, gh, repo: REPO });
     assert.equal(plan.filter((c) => c.method === 'PUT').length, 6, 'five rulesets by id and the environment');
     assert.deepEqual(gh.writes(), []);
+  });
+});
+
+describe('D8 the gh launcher stops the whole tree at its ceiling', () => {
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const POSIX = process.platform !== 'win32';
+
+  it('a gh that outlives the ceiling is killed with the child it started: the timeout is an error and no descendant is left', { skip: !POSIX }, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-launcher-'));
+    const pidFile = path.join(dir, 'grandchild.pid');
+    t.after(() => {
+      try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* gone, as it should be */ }
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+    fs.mkdirSync(path.join(dir, 'bin'));
+    // The fake gh starts a descendant that holds no pipe (so only a tree kill can reach it), records its pid and hangs.
+    fs.writeFileSync(path.join(dir, 'bin', 'gh'), '#!/bin/sh\nsleep 300 >/dev/null 2>&1 &\necho $! > "$PID_FILE"\nsleep 300\n', { mode: 0o755 });
+    const gh = ghLauncher({ ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, PID_FILE: pidFile }, { timeoutMs: 700 });
+    const refused = await gh(['api', 'user']).then(() => null, (error) => error);
+    const grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+    assert.ok(grandchild > 1, 'the fake gh recorded its descendant');
+    const until = Date.now() + 3000;
+    while (alive(grandchild) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(alive(grandchild), false, 'the descendant of a timed-out gh is gone');
+    assert.match(String(refused?.message), /timed out/);
+  });
+
+  it('a normal call returns its output, writes stdin, and a failing call says the first line of stderr', { skip: !POSIX }, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-launcher-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(dir, 'bin'));
+    fs.writeFileSync(path.join(dir, 'bin', 'gh'), '#!/bin/sh\nif [ "$1" = fail ]; then echo "gh: Not Found (HTTP 404)" >&2; echo more >&2; exit 1; fi\nif [ "$1" = echo ]; then cat; else echo "args:$*"; fi\n', { mode: 0o755 });
+    const gh = ghLauncher({ ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}` });
+    assert.equal((await gh(['api', 'user'])).trim(), 'args:api user');
+    assert.equal(await gh(['echo'], '{"a":1}'), '{"a":1}');
+    await assert.rejects(gh(['fail']), (e) => e.message === 'gh: Not Found (HTTP 404)');
   });
 });

@@ -21,10 +21,12 @@
  * `gh` is a function parameter (argv, optional stdin → stdout), as in tools/promote-release.mjs: no environment
  * variable names the executable.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { killTree } from '../../tools/lib/proc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.join(HERE, '..', '..');
@@ -357,14 +359,46 @@ async function send(gh, { method, endpoint, body }) {
 
 // ── the command ──────────────────────────────────────────────────────────────────────────────────
 
-export function ghLauncher(env = process.env) {
-  return async (args, input) => {
-    try {
-      return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, input, env, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
-    } catch (error) {
-      throw new Error(firstLine(error.stderr) || firstLine(error.message));
-    }
-  };
+/**
+ * The launcher of `gh`: argv and optional stdin in, stdout out, an Error whose message is the first line of stderr.
+ * A `gh` that outlives `timeoutMs` is killed WITH everything it started (`killTree` of tools/lib/proc.mjs: the process
+ * group, or `taskkill /T` on Windows): a timeout that only stops waiting leaves an orphan, and a plain `child.kill()` on
+ * Windows reaches the shell and none of its children. `proc.run` has no stdin, and `--input -` needs one.
+ */
+export function ghLauncher(env = process.env, { timeoutMs = GH_TIMEOUT_MS, maxBytes = 8 * 1024 * 1024 } = {}) {
+  return (args, input) => new Promise((resolve, reject) => {
+    const child = spawn('gh', args, { env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true });
+    const out = [];
+    const err = [];
+    let size = 0;
+    let timedOut = false;
+    let overflow = false;
+    let failure = null;
+    const take = (list) => (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        overflow = true;
+        killTree(child);
+      } else list.push(chunk);
+    };
+    child.stdout.on('data', take(out));
+    child.stderr.on('data', take(err));
+    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs);
+    child.on('error', (error) => { failure = error; });
+    // A gh that exits can leave descendants holding its pipes; end its group now, or 'close' never comes.
+    child.on('exit', () => killTree(child));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const stderr = Buffer.concat(err).toString('utf8');
+      if (timedOut) reject(new Error(`gh timed out after ${timeoutMs} ms and was stopped with everything it started`));
+      else if (overflow) reject(new Error(`gh printed more than ${maxBytes} bytes`));
+      else if (failure !== null) reject(new Error(firstLine(failure.message)));
+      else if (code !== 0) reject(new Error(firstLine(stderr) || `gh exited with ${code}`));
+      else resolve(Buffer.concat(out).toString('utf8'));
+    });
+    child.stdin.on('error', () => { /* gh ended before it read its input: its exit code says why */ });
+    child.stdin.end(input);
+  });
 }
 
 function repositoryOf(env, argv) {
