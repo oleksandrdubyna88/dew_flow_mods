@@ -206,8 +206,9 @@ export function ciRunsFor(answer, sha) {
  *
  * Paging matters because the judgement is "EVERY run is green": a listing that stopped at one page
  * could be missing exactly the failed run that should refuse the promotion, and a sha whose runs
- * merely OUTNUMBER a page must still be promotable. A page that comes back empty ends the loop even
- * if the count disagrees, so a remote that miscounts cannot spin here.
+ * merely OUTNUMBER a page must still be promotable. A page that comes back empty BEFORE the reported total is
+ * reached is an unreadable listing (a refusal to decide), and the page ceiling stops a remote that keeps claiming
+ * more from spinning here.
  */
 export async function collectCiRuns(gh, repository, sha) {
   const runs = [];
@@ -224,7 +225,10 @@ export async function collectCiRuns(gh, repository, sha) {
     if (parsed.error !== undefined) return { error: parsed.error };
     runs.push(...parsed.runs);
     seen += parsed.listed;
-    if (parsed.listed === 0 || seen >= parsed.total) return { runs };
+    if (seen >= parsed.total) return { runs };
+    // An empty page while the count says more is waiting is not "the end": the runs it should hold could be the failed
+    // one that disqualifies the sha. A listing that falls short of its own count is unreadable, never complete.
+    if (parsed.listed === 0) return { error: `page ${page} came back empty after ${seen} of ${parsed.total} runs; the listing is short of the count GitHub gave` };
   }
   return { error: `more than ${MAX_RUN_PAGES} pages of ci runs for one commit; that is a symptom, not a listing` };
 }

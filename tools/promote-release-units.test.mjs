@@ -127,6 +127,27 @@ test("a failed ci run on the SECOND page still refuses the promotion", (t) => {
   assert.equal(s.rules.releaseAt(), "", "nothing was pushed");
 });
 
+test("a later page that is empty before the reported total is an unreadable listing — never a complete one", (t) => {
+  // The first page is a hundred successes and total_count says 150; page two comes back with no runs. The listing is
+  // short of what GitHub said it has, and the missing fifty could hold the failed run: refuse, do not call it complete.
+  const s = scene(t);
+  const green = Array.from({ length: 100 }, (_, i) => ciRun(s.rules.second, { id: 1000 + i }));
+  s.github.answersInOrder([
+    { stdout: JSON.stringify({ total_count: 150, workflow_runs: green }) },
+    { stdout: JSON.stringify({ total_count: 150, workflow_runs: [] }) },
+  ]);
+  const { code, out } = s.promote([s.rules.second]);
+  assert.equal(code, EXIT.UNDECIDED, out);
+  assert.match(out, /UNDECIDED — UNREADABLE ANSWER/, out);
+  assert.match(out, /page 2 came back empty after 100 of 150 runs/, out);
+  assert.deepEqual(s.github.calls(), [runsQuery(s.rules.second, 1), runsQuery(s.rules.second, 2)]);
+  assert.equal(s.rules.releaseAt(), "", "nothing was pushed");
+  // an empty first page with a total of 0 is still a real answer of "no runs"
+  s.github.lists([]);
+  const none = s.promote([s.rules.second]);
+  assert.match(none.out, /REFUSED — NO CI RUN/, none.out);
+});
+
 test("a refused push says where release actually is, instead of only that nothing moved", (t) => {
   // The new read-back in the catch path. Its real purpose is the race where the remote ACCEPTED the
   // update and the connection dropped before the answer arrived \u— reporting that as "nothing was
