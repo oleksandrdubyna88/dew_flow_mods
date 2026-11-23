@@ -36,6 +36,17 @@ export const EXIT = Object.freeze({ MATCH: 0, DRIFT: 1, USAGE: 2, UNSEEN: 3 });
 export const DEPLOY_KEY_ACTOR = Object.freeze({ actor_id: null, actor_type: 'DeployKey', bypass_mode: 'always' });
 /** Rulesets that may carry that actor; every other ruleset has none. */
 export const MAY_BYPASS = Object.freeze(['release-moves', 'tags-create']);
+/**
+ * The rule types each ruleset holds, sorted: exactly these and no others. A bypass covers every rule of its ruleset,
+ * so a rule added or taken out changes what a ruleset means; the data may not do that without this table changing.
+ */
+export const RULE_TYPES = Object.freeze({
+  main: ['deletion', 'non_fast_forward', 'pull_request', 'required_linear_history', 'required_status_checks'],
+  'release-moves': ['creation', 'update'],
+  'release-fixed': ['deletion', 'non_fast_forward'],
+  'tags-create': ['creation'],
+  'tags-fixed': ['deletion', 'update'],
+});
 
 /** The Actions app's id: a required check names it, so a status posted by another identity does not count. */
 export const ACTIONS_APP_ID = 15368;
@@ -81,6 +92,13 @@ export function validateData({ rulesets, settings, catalog }) {
     }
     if (body.enforcement !== 'active') findings.push(`${file}: enforcement is ${JSON.stringify(body.enforcement)}, it must be "active"`);
     if (!['branch', 'tag'].includes(body.target)) findings.push(`${file}: target is ${JSON.stringify(body.target)}`);
+    if (!(body.name in RULE_TYPES)) findings.push(`${file}: the name ${JSON.stringify(body.name)} is not one of ${Object.keys(RULE_TYPES).join(', ')}`);
+    else {
+      const types = sorted((body.rules ?? []).map((r) => r.type));
+      if (!same(types, RULE_TYPES[body.name])) findings.push(`${file}: ${body.name}: the rule types are ${JSON.stringify(types)}, they must be ${JSON.stringify(RULE_TYPES[body.name])}`);
+    }
+    const exclude = body.conditions?.ref_name?.exclude;
+    if (!same(exclude, [])) findings.push(`${file}: ${body.name}: conditions.ref_name.exclude is ${JSON.stringify(exclude)}, it must be []: an exclude takes refs out of the rules`);
   }
   for (const name of MAY_BYPASS) {
     if (byName.get(name)?.bypass_actors?.length !== 1) findings.push(`${name}: the ruleset is missing, or it lacks the DeployKey bypass that lets the promotion move the ref`);

@@ -106,6 +106,18 @@ describe('D1 the data files', () => {
     assert.match(find((d) => { by(d, 'release-moves').bypass_actors = []; }).join('\n'), /release-moves: the ruleset is missing, or it lacks the DeployKey bypass/);
   });
 
+  it('the exact rule types and an empty exclude per ruleset: a rule removed or added, an exclude, or an unknown name is a finding', () => {
+    const find = (patch) => { const d = clone(loadData()); patch(d); return validateData(d).join('\n'); };
+    const by = (d, name) => d.rulesets.find((r) => r.body.name === name).body;
+    assert.match(find((d) => { by(d, 'release-fixed').rules = by(d, 'release-fixed').rules.filter((r) => r.type !== 'non_fast_forward'); }), /release-fixed: the rule types are \["deletion"\], they must be \["deletion","non_fast_forward"\]/);
+    assert.match(find((d) => { by(d, 'tags-create').rules.push({ type: 'deletion' }); }), /tags-create: the rule types are/);
+    assert.match(find((d) => { by(d, 'main').rules = by(d, 'main').rules.filter((r) => r.type !== 'required_linear_history'); }), /main: the rule types are/);
+    assert.match(find((d) => { by(d, 'release-moves').conditions.ref_name.exclude = ['refs/heads/release']; }), /release-moves: conditions\.ref_name\.exclude is \["refs\/heads\/release"\], it must be \[\]/);
+    assert.match(find((d) => { by(d, 'main').conditions.ref_name.exclude = ['refs/heads/main']; }), /main: conditions\.ref_name\.exclude/);
+    assert.match(find((d) => { by(d, 'tags-fixed').conditions.ref_name.exclude = ['refs/tags/x']; }), /tags-fixed: conditions\.ref_name\.exclude/);
+    assert.match(find((d) => { by(d, 'main').name = 'other'; }), /is not one of/);
+  });
+
   it('for each plugin of the catalog the tag pattern is in both tag rulesets', () => {
     const d = clone(loadData());
     d.catalog.plugins.push({ name: 'second-mod', source: './plugins/second-mod', description: 'x' });
