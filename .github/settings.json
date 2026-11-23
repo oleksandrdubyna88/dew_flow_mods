@@ -1,0 +1,26 @@
+{
+  "$note": "Settings that GitHub holds and no file in the repository can make it read. `node .github/scripts/repo-settings.mjs` reads every part back and exits 0 only when each equals this data; `--apply` writes the rulesets and the environment from it (never the deploy key, never a secret: the owner makes those by hand, see README). A change of this file needs the owner's word.",
+  "environment": {
+    "$note": "The owner alone reviews: prevent_self_review is false so that the owner can dispatch and approve the same run. can_admins_bypass is sent on apply and compared only when the API shows it; if it does not, the owner sets it by hand (Settings > Environments > release > unticks 'Allow administrators to bypass configured protection rules') and the record says so with the date. The secret is named here and set by the owner; it must exist in this environment only, never as a repository secret.",
+    "name": "release",
+    "wait_timer": 0,
+    "prevent_self_review": false,
+    "can_admins_bypass": false,
+    "reviewers": [{ "type": "User", "id": 71817001 }],
+    "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true },
+    "branch_policies": [{ "name": "main", "type": "branch" }],
+    "secrets": ["RELEASE_DEPLOY_KEY"]
+  },
+  "deployKey": {
+    "$note": "One key, titled release-promotion, writable. `key` is the public line the owner's ssh-keygen printed (step 3 of the apply order); until a pull request writes it here the read-back reports it as missing.",
+    "title": "release-promotion",
+    "read_only": false,
+    "key": ""
+  },
+  "actions": {
+    "$note": "Story 2.1 set these; this is their read-back.",
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false,
+    "fork_pr_contributor_approval": "all_external_contributors"
+  }
+}

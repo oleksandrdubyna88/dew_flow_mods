@@ -1,0 +1,12 @@
+{
+  "$note": "A version tag is never moved or deleted: no bypass actor.",
+  "name": "tags-fixed",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/agent-models--v*"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "update" },
+    { "type": "deletion" }
+  ]
+}
