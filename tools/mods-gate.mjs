@@ -32,7 +32,8 @@ const TOP_KEYS = ["name", "owner", "metadata", "plugins"];
 const ENTRY_KEYS = ["name", "source", "description"];
 /** Lowercase words joined by SINGLE hyphens: a name is also a tag prefix, and `--v` is what ends it. */
 const PLUGIN_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const VERSION = /^\d+\.\d+\.\d+$/;
+/** Canonical: a number has no leading zero, so one version has one spelling and one tag (`1.6.01` is not `1.6.1`). */
+const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 const firstLine = (text) => String(text ?? "").trim().split("\n")[0];
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -95,7 +96,14 @@ export function inspect({ git, rev, release = "" }) {
   const entries = listTree(git, rev);
   const files = new Set(entries.map((e) => e.path));
   const folders = new Set();
+  // Names are judged in lower case: on a case-insensitive disk `Plugins/` IS `plugins/`, and `Package.json` IS package.json.
+  const lookalikes = new Set();
   for (const entry of entries) {
+    const top = entry.path.split("/")[0];
+    if (top !== "plugins" && top.toLowerCase() === "plugins" && !lookalikes.has(top)) {
+      lookalikes.add(top);
+      add(top, "a top-level entry that is `plugins` in other letters; on a case-insensitive disk it is the plugins folder, and only `plugins` is one");
+    }
     if (!entry.path.startsWith("plugins/")) continue;
     if (entry.mode === "120000") add(entry.path, "a symlink (mode 120000); a plugin holds no link");
     else if (entry.mode === "160000") add(entry.path, "a gitlink (mode 160000); a plugin holds no submodule");
@@ -106,7 +114,7 @@ export function inspect({ git, rev, release = "" }) {
       continue;
     }
     folders.add(segments[0]);
-    if (FORBIDDEN_NAMES.includes(segments.at(-1)) || segments.includes("node_modules")) {
+    if (FORBIDDEN_NAMES.includes(segments.at(-1).toLowerCase()) || segments.some((s) => s.toLowerCase() === "node_modules")) {
       add(entry.path, "a plugin folder holds no package.json, lockfile or node_modules");
     }
   }

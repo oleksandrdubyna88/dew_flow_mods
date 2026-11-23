@@ -101,3 +101,46 @@ test("G9: the standalone gate on this repository's HEAD exits 0 and says how man
   assert.equal(cli.status, 0, `${cli.stdout}${cli.stderr}`);
   assert.match(cli.stdout, /1 plugin read/, cli.stdout);
 });
+
+// ── review fixes: the version is canonical, and names are judged in lower case ───────────────────
+
+test("G5: a version with a leading zero is a LAYOUT finding — 1.6.01 would name the tag agent-models--v1.6.01", (t) => {
+  for (const bad of ["1.6.01", "01.6.1", "1.06.1", "1.6.001"]) {
+    const { s, sha } = moved(t, { "plugins/agent-models/.claude-plugin/plugin.json": MANIFEST("agent-models", bad) });
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${bad}: ${out}`);
+    assert.match(out, /REFUSED — LAYOUT/, `${bad}: ${out}`);
+    assert.match(out, new RegExp(`plugin\\.json: version "${bad.replaceAll(".", "\\.")}" is not`), `${bad}: ${out}`);
+    assert.deepEqual(s.github.calls(), [], `${bad}: GitHub is not asked`);
+    assert.equal(s.rules.releaseAt(), s.rules.second, `${bad}: release did not move`);
+  }
+  // the zero itself is a number: 0.0.0 and 10.20.30 are canonical
+  for (const good of ["0.0.0", "10.20.30"]) {
+    const { s, sha } = moved(t, { "plugins/agent-models/.claude-plugin/plugin.json": MANIFEST("agent-models", good) });
+    const found = layoutFindings({ git: (...args) => git(s.rules.work, ...args), rev: sha });
+    assert.deepEqual(found, [], good);
+  }
+});
+
+test("G9: a top-level Plugins/ or PLUGINS/ is refused — on a case-insensitive disk it is the plugins folder", (t) => {
+  for (const top of ["Plugins", "PLUGINS"]) {
+    const { s, sha } = moved(t, { [`${top}/agent-models/hooks/evil.tsx`]: "x\n", [`${top}/other/readme`]: "y\n" }, "first");
+    const before = s.rules.refs();
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${top}: ${out}`);
+    assert.match(out, /REFUSED — LAYOUT/, `${top}: ${out}`);
+    assert.equal([...out.matchAll(new RegExp(`^ {2}${top}: a top-level entry`, "gm"))].length, 1, `${top}: one finding for the entry: ${out}`);
+    assert.deepEqual(s.github.calls(), [], `${top}: GitHub is not asked`);
+    assert.deepEqual(s.rules.refs(), before, `${top}: nothing pushed`);
+  }
+});
+
+test("G9: Package.json, Yarn.lock and Node_Modules are the same names in other cases — refused", (t) => {
+  for (const file of ["plugins/agent-models/Package.json", "plugins/agent-models/hooks/PACKAGE-LOCK.JSON", "plugins/agent-models/Yarn.lock", "plugins/agent-models/Node_Modules/x/index.js"]) {
+    const { s, sha } = moved(t, { [file]: "x\n" }, "first");
+    const { code, out } = s.promote([sha]);
+    assert.equal(code, EXIT.REFUSED, `${file}: ${out}`);
+    assert.match(out, new RegExp(`${file.replaceAll(".", "\\.")}: a plugin folder holds no package\\.json, lockfile or node_modules`), `${file}: ${out}`);
+    assert.equal(s.rules.releaseAt(), s.rules.first, `${file}: release did not move`);
+  }
+});
