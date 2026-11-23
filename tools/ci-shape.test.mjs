@@ -49,3 +49,17 @@ describe('ci.yml shape', () => {
     assert.doesNotMatch(CI, /SONAR_TOKEN|secrets\./);
   });
 });
+
+describe('ci.yml shape: the release gate', () => {
+  it('S5: the tools job fetches the shared rules BEFORE the tests, because the tests import their helper', () => {
+    const tools = job('tools');
+    const fetchAt = tools.indexOf('git submodule update --init --depth 1 .agents/conventions');
+    const testsAt = tools.indexOf('run: npm test');
+    assert.ok(fetchAt !== -1, 'no step initialises the mounted conventions');
+    assert.ok(testsAt !== -1 && fetchAt < testsAt, 'the submodule is fetched after npm test');
+  });
+
+  it('S6: the tools job runs the layout gate on the commit it checked out', () => {
+    assert.match(job('tools'), /^\s+run: node tools\/mods-gate\.mjs\s*$/m);
+  });
+});

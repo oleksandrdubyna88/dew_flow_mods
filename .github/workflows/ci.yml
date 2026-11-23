@@ -38,16 +38,23 @@ jobs:
           node-version: 22
       - name: Install (no install script)
         run: npm ci --ignore-scripts
-      # `npm test` is `node --test "tools/*.test.mjs"`: copy-proof, type-baseline and claude-bin test themselves
-      # against real git repositories in a temp folder.
+      # The tests of the release gate build their temp folders with the helper of the mounted conventions
+      # (`.agents/conventions/tools/lib/owned.mjs`), so the submodule is fetched BEFORE they run. The conventions
+      # repository is public, so no token is needed.
+      - name: Fetch the shared rules
+        run: git submodule update --init --depth 1 .agents/conventions
+      # `npm test` is `node --test "tools/*.test.mjs"`: copy-proof, type-baseline, claude-bin, the release gate
+      # (promote-release, mods-gate, the settings data) and the workflow structure test themselves against real git
+      # repositories in a temp folder and scripted GitHub answers. No test calls GitHub.
       - name: Tools tests
         run: npm test
-      # C1: the plugin folder equals mods/agent-models of dew_flow_conventions at the named commit. The conventions
-      # repository is public, so no token is needed to fetch the one commit.
+      # The layout gate the promotion runs, on the commit this job checked out: the catalog is the shape served, the
+      # plugin folders and the entries are one set, a plugin holds no package.json, lockfile, symlink or gitlink.
+      - name: Layout gate
+        run: node tools/mods-gate.mjs
+      # C1: the plugin folder equals mods/agent-models of dew_flow_conventions at the named commit.
       - name: Fetch the commit the plugin was copied from
-        run: |
-          git submodule update --init --depth 1 .agents/conventions
-          git -C .agents/conventions fetch --depth 1 origin "$CONVENTIONS_COPY_SHA"
+        run: git -C .agents/conventions fetch --depth 1 origin "$CONVENTIONS_COPY_SHA"
       # Once plugin.json goes above 1.6.0 the proof reads the tree of the tag agent-models--v1.6.0, and a shallow
       # checkout has no tag. The tag does not exist before the first promotion: then the fetch finds nothing and the
       # step goes on, because the proof is the one that turns an absent tag into a red (only above 1.6.0).
