@@ -50,6 +50,21 @@ export const RULE_TYPES = Object.freeze({
   'tags-fixed': ['deletion', 'update'],
 });
 
+/**
+ * What each ruleset holds, exactly: its target and its include. A ruleset on another ref than its own protects nothing
+ * of the ref it is named for (`release-fixed` pointed at main leaves release open to a rewind), so the data may not
+ * move a ruleset to another ref without this table changing. EVERY tag (`~ALL`), not a pattern per plugin: a pattern
+ * covers only the names it spells, and `git fetch origin release` or `git clone --branch release` takes a TAG named
+ * release when one exists. Nobody but the deploy key creates a tag.
+ */
+export const SCOPE = Object.freeze({
+  main: { target: 'branch', include: ['refs/heads/main'] },
+  'release-moves': { target: 'branch', include: ['refs/heads/release'] },
+  'release-fixed': { target: 'branch', include: ['refs/heads/release'] },
+  'tags-create': { target: 'tag', include: ['~ALL'] },
+  'tags-fixed': { target: 'tag', include: ['~ALL'] },
+});
+
 /** The Actions app's id: a required check names it, so a status posted by another identity does not count. */
 export const ACTIONS_APP_ID = 15368;
 
@@ -77,7 +92,8 @@ export function loadData(root = ROOT) {
 /**
  * D1: what the data must be before anything is compared with it. Returns the findings (empty is good).
  * Every bypass list is empty or exactly the deploy key (and only the two `move` rulesets have it); every ruleset is
- * `active`; both tag rulesets cover every tag (`~ALL`); each ruleset has its exact rule types and an empty exclude.
+ * `active`; every named ruleset is present, on its own target and exactly its own include (both tag rulesets cover
+ * every tag, `~ALL`); each ruleset has its exact rule types and an empty exclude.
  */
 export function validateData({ rulesets, settings, catalog }) {
   const findings = [];
@@ -94,6 +110,7 @@ export function validateData({ rulesets, settings, catalog }) {
     }
     if (body.enforcement !== 'active') findings.push(`${file}: enforcement is ${JSON.stringify(body.enforcement)}, it must be "active"`);
     if (!['branch', 'tag'].includes(body.target)) findings.push(`${file}: target is ${JSON.stringify(body.target)}`);
+    else if (body.name in SCOPE && body.target !== SCOPE[body.name].target) findings.push(`${file}: target is ${JSON.stringify(body.target)}, it must be ${JSON.stringify(SCOPE[body.name].target)}`);
     if (!(body.name in RULE_TYPES)) findings.push(`${file}: the name ${JSON.stringify(body.name)} is not one of ${Object.keys(RULE_TYPES).join(', ')}`);
     else {
       const types = sorted((body.rules ?? []).map((r) => r.type));
@@ -102,14 +119,15 @@ export function validateData({ rulesets, settings, catalog }) {
     const exclude = body.conditions?.ref_name?.exclude;
     if (!same(exclude, [])) findings.push(`${file}: ${body.name}: conditions.ref_name.exclude is ${JSON.stringify(exclude)}, it must be []: an exclude takes refs out of the rules`);
   }
-  for (const name of MAY_BYPASS) {
-    if (byName.get(name)?.bypass_actors?.length !== 1) findings.push(`${name}: the ruleset is missing, or it lacks the DeployKey bypass that lets the promotion move the ref`);
+  for (const name of Object.keys(SCOPE)) {
+    if (!byName.has(name)) findings.push(`${name}: the ruleset is missing from .github/rulesets; the data must hold all of ${Object.keys(SCOPE).join(', ')}`);
   }
-  // EVERY tag, not a pattern per plugin: a pattern covers only the names it spells, and `git fetch origin release` or
-  // `git clone --branch release` takes a TAG named release when one exists. Nobody but the deploy key creates a tag.
-  for (const name of ['tags-create', 'tags-fixed']) {
+  for (const name of MAY_BYPASS) {
+    if (byName.has(name) && byName.get(name).bypass_actors?.length !== 1) findings.push(`${name}: the ruleset lacks the DeployKey bypass that lets the promotion move the ref`);
+  }
+  for (const [name, { include: want }] of Object.entries(SCOPE)) {
     const include = byName.get(name)?.conditions?.ref_name?.include;
-    if (!same(include, ['~ALL'])) findings.push(`${name}: conditions.ref_name.include is ${JSON.stringify(include)}, it must be ["~ALL"]: every tag, not a pattern`);
+    if (byName.has(name) && !same(include, want)) findings.push(`${name}: conditions.ref_name.include is ${JSON.stringify(include)}, it must be ${JSON.stringify(want)}${want[0] === '~ALL' ? ': every tag, not a pattern' : ': the ref this ruleset is named for, and no other'}`);
   }
   const env = settings.environment ?? {};
   if (!Array.isArray(env.reviewers) || env.reviewers.length !== 1) findings.push('settings.json: the environment has exactly one reviewer, the owner');

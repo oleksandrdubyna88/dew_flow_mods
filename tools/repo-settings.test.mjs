@@ -104,7 +104,7 @@ describe('D1 the data files', () => {
     assert.match(find((d) => { by(d, 'main').bypass_actors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; }).join('\n'), /main\.json: bypass_actors/);
     assert.match(find((d) => { by(d, 'tags-fixed').bypass_actors = [DEPLOY_KEY_ACTOR]; }).join('\n'), /tags-fixed\.json: tags-fixed has the DeployKey bypass/);
     assert.match(find((d) => { by(d, 'main').enforcement = 'evaluate'; }).join('\n'), /main\.json: enforcement is "evaluate"/);
-    assert.match(find((d) => { by(d, 'release-moves').bypass_actors = []; }).join('\n'), /release-moves: the ruleset is missing, or it lacks the DeployKey bypass/);
+    assert.match(find((d) => { by(d, 'release-moves').bypass_actors = []; }).join('\n'), /release-moves: the ruleset lacks the DeployKey bypass/);
   });
 
   it('the exact rule types and an empty exclude per ruleset: a rule removed or added, an exclude, or an unknown name is a finding', () => {
@@ -132,6 +132,26 @@ describe('D1 the data files', () => {
     const second = clone(loadData());
     second.catalog.plugins.push({ name: 'second-mod', source: './plugins/second-mod', description: 'x' });
     assert.deepEqual(validateData(second), []);
+  });
+});
+
+describe('D1 every named ruleset, on its own ref', () => {
+  const find = (patch) => { const d = clone(loadData()); patch(d); return validateData(d).join('\n'); };
+  const by = (d, name) => d.rulesets.find((r) => r.body.name === name).body;
+
+  it('a ruleset that is missing from the data is a finding, each of the five by name', () => {
+    for (const name of ['main', 'release-moves', 'release-fixed', 'tags-create', 'tags-fixed']) {
+      assert.match(find((d) => { d.rulesets = d.rulesets.filter((r) => r.body.name !== name); }), new RegExp(`${name}: the ruleset is missing`), name);
+    }
+  });
+
+  it('a ruleset that holds another ref than its own, or another target, is a finding: release-fixed on main protects nothing of release', () => {
+    assert.match(find((d) => { by(d, 'release-fixed').conditions.ref_name.include = ['refs/heads/main']; }), /release-fixed: conditions\.ref_name\.include is \["refs\/heads\/main"\], it must be \["refs\/heads\/release"\]/);
+    assert.match(find((d) => { by(d, 'release-fixed').conditions.ref_name.include = ['refs/heads/release', 'refs/heads/main']; }), /release-fixed: conditions\.ref_name\.include/);
+    assert.match(find((d) => { by(d, 'release-moves').conditions.ref_name.include = ['refs/heads/rel*']; }), /release-moves: conditions\.ref_name\.include/);
+    assert.match(find((d) => { by(d, 'main').conditions.ref_name.include = ['~DEFAULT_BRANCH']; }), /main: conditions\.ref_name\.include/);
+    assert.match(find((d) => { by(d, 'release-fixed').target = 'tag'; }), /release-fixed\.json: target is "tag", it must be "branch"/);
+    assert.match(find((d) => { by(d, 'tags-fixed').target = 'branch'; }), /tags-fixed\.json: target is "branch", it must be "tag"/);
   });
 });
 
