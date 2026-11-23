@@ -1,0 +1,16 @@
+{
+  "name": "dew-flow-mods",
+  "owner": {
+    "name": ".netCTO"
+  },
+  "metadata": {
+    "description": "Claude Code mods of the dew_flow family"
+  },
+  "plugins": [
+    {
+      "name": "agent-models",
+      "source": "./plugins/agent-models",
+      "description": "Shows each running subagent with its model, the account limits, the tasks list, pins under answers and a last answer button, in a row above the prompt"
+    }
+  ]
+}
