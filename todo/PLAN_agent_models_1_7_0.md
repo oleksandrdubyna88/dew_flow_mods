@@ -1,6 +1,6 @@
 # PLAN — agent-models mod 1.7.0: a `wake` button that wakes this session every 2 hours
 
-> Status: **plan only, 2026-11-24; review next.** Scope: `plugins/agent-models/` (a `wake` button in the account row, a new
+> Status: **APPROVED 2026-11-24 (epoch 1, by reviewers: the Opus plan review; the coai round skipped by the owner, 2026-11-24); build next.** Scope: `plugins/agent-models/` (a `wake` button in the account row, a new
 > `hooks/wake.tsx`, one state value, version 1.7.0, the mod's own tests), `todo/README.md`. The release goes the normal way of
 > this repository (the promotion with the owner's approval click; installs update by themselves). Parent: the mod as it is
 > at `97fc511` (1.6.1).
@@ -16,6 +16,15 @@ session wakes up."
 
 Not in this plan: a wake that outlives the Claude Code process (the timer lives in the open session only), another interval
 than 2 h or another text (the owner named both), R4 of the mod tests (the follow-up row in `todo/README.md` stays open).
+
+## Plan changes
+
+> Epoch 1 · approved 2026-11-24 · by reviewers · state: open
+
+  (The Opus plan review accepted findings — claim the fire with `update`, one wake in flight, `{ drop }` toasts, the
+  engine rules for functions that take the engine handle, the shared draw clock, the drawn label in the row cells, `wake in <1m`
+  at the due time, the owner notes, the reload test — are the baseline. Its finding 10 replaced the turn flag: the engine
+  holds a plugin prompt until the session is idle. The coai round did not run: the owner said to skip it.)
 
 ## What the code and the engine do today (read 2026-11-24 at `97fc511`, Claude Code 2.1.331)
 
