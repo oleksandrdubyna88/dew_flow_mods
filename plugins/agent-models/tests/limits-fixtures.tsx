@@ -130,7 +130,7 @@ export const rowOf = (tree: unknown): Node | undefined => {
 
 // the tsconfig has no node types: the one timer the fixture needs, typed here
 const timers = globalThis as unknown as { setTimeout: (fn: () => void, ms: number) => unknown }
-export type OwnClock = { now: number; isRefused: boolean; nowCalls: number; everyRefusals: number; tick: (ms: number) => Promise<void> }
+export type OwnClock = { now: number; isRefused: boolean; nowCalls: number; everyRefusals: number; tick: (ms: number) => Promise<void>; isWaiting: () => boolean }
 /**
  * A clock the test steers by hand, for a test that must count or refuse `$.clock.now`: the time is `now`, a refused clock denies it,
  * `tick(ms)` moves it on and fires one period of the 2 s timer. No `$.clock.after` ever fires (no ceiling runs). Register it BEFORE `world`.
@@ -142,6 +142,7 @@ export const ownClock = (on: On, start: number): OwnClock => {
     isRefused: false,
     nowCalls: 0,
     everyRefusals: 0, // the next this many `$.clock.every` calls are refused: a Timer that never fires
+    isWaiting: () => waits.length > 0, // the mod's timer has asked for its next period
     tick: async ms => {
       clock.now += ms
       waits.shift()?.()

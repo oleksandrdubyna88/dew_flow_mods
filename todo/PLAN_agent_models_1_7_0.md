@@ -26,6 +26,8 @@ than 2 h or another text (the owner named both), R4 of the mod tests (the follow
   at the due time, the owner notes, the reload test — are the baseline. Its finding 10 replaced the turn flag: the engine
   holds a plugin prompt until the session is idle. The coai round did not run: the owner said to skip it.)
 
+- 1.1 · 2026-11-24 · reviewer · approach — the code round: a wake that still waits after 2 h counts as lost and a skipped wake shows a toast; the stored `minute` is the minutes left, so the label turns on time
+
 ## What the code and the engine do today (read 2026-11-24 at `97fc511`, Claude Code 2.1.331)
 
 - The account row is `accountRow` (`hooks/register.tsx`): `[ messages ]  <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ]`.

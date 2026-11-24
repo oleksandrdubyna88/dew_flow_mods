@@ -1,14 +1,18 @@
 import { expect, test } from 'claude-code/testing'
 
+import { WAKE_GUARD_TICKS } from '../hooks/wake'
+import { COMPOSER, submitOf } from './answer-fixtures'
+
 import {
-  advance, gate, H, labelOf, lastWake, mountBand, MIN, ON_TOAST, pressWake, spin, START, TEXT, wakeText, wakeToasts, wakeWorld,
+  advance, gate, H, labelOf, lastWake, mountBand, MIN, ON_TOAST, pressWake, spin, START, TEXT, tick, wakeText, wakeToasts, wakeWorld,
 } from './wake-fixtures'
 
 // The wake button (1.7.0): a press arms a timer in the mod; each 2 s tick sends `продолжай автономно` once the due time has come.
 // The clock is steered by hand (`w.clk`): a tick moves it and runs one period of the 2 s timer.
 
 const SURFACES = ['terminal', 'desktop'] as const
-const ARMED = { nextAt: START + 2 * H, minute: Math.floor(START / MIN) } // what a press at START stores
+const ARMED = { nextAt: START + 2 * H, minute: 120 } // what a press at START stores: the due time and the minutes left (1.7.0: the label's own minute)
+const SKIP = 'wake: skipped — the last wake still waits for its turn'
 
 // --- the button ---
 
@@ -41,7 +45,7 @@ test('W1b the wake button follows the last answer button in the row', async ($, 
 })
 
 test('W2 on: the label counts down from the due time; under a minute is <1m; a refused clock at the draw says wake on', async ($, on) => {
-  const w = await wakeWorld($, on, { seed: { nextAt: START + 112 * MIN, minute: Math.floor(START / MIN) } })
+  const w = await wakeWorld($, on, { seed: { nextAt: START + 112 * MIN, minute: 112 } })
   const ui = await mountBand($)
   expect(await labelOf(ui)).toBe('wake in 1h 52m')
   w.clk.now = START + 112 * MIN - 30_000
@@ -122,7 +126,7 @@ test('W5 two ticks at the same due time, the first still holding the state it re
     w.afterRead = undefined
     await g.wait // the first tick holds the due state it read
   }
-  const first = w.clk.tick(0)
+  const first = tick(w, 0)
   await spin()
   await advance(w, 0) // a second tick of the same timer starts while the first one has not claimed
   expect(w.sent).toHaveLength(0)
@@ -144,7 +148,7 @@ test('W5c a tick whose due state was claimed or re-armed by someone else before 
     w.afterRead = undefined
     await g.wait
   }
-  const ticking = w.clk.tick(0)
+  const ticking = tick(w, 0)
   await spin()
   await pressWake(ui) // off
   await pressWake(ui) // on again: the due time is now + 2h, as if another scope had claimed this one
@@ -167,7 +171,7 @@ test('W5b a press off between a tick\'s read and its claim gives no send, and th
     w.afterRead = undefined
     await g.wait // the tick holds the due state it read; later reads (the press) go through
   }
-  const ticking = w.clk.tick(0)
+  const ticking = tick(w, 0)
   await spin()
   await pressWake(ui) // off
   expect(lastWake(w)).toBeNull()
@@ -264,15 +268,19 @@ test('W9b a session end writes null before the end step', async ($, on) => {
   expect(w.events).toEqual(['write:null', 'end'])
 })
 
-test('W9c the minute is written only when the clock minute changes', async ($, on) => {
+test('W9c the minutes left are written only when they change, at the moment the label turns', async ($, on) => {
   const w = await wakeWorld($, on)
   const ui = await mountBand($)
   await pressWake(ui)
   expect(w.writes).toEqual([ARMED])
-  for (let i = 0; i < 5; i += 1) await advance(w, 2_000) // 10 s later: still the same clock minute
-  expect(w.writes, 'no write for the ticks inside one minute').toEqual([ARMED])
-  await advance(w, 60_000)
-  expect(w.writes).toEqual([ARMED, { nextAt: ARMED.nextAt, minute: ARMED.minute + 1 }])
+  await advance(w, 2_000) // 1h 59m 58s left: the label says 1h 59m
+  const turned = { nextAt: ARMED.nextAt, minute: 119 }
+  expect(w.writes, 'the label turned at the first tick, not at a clock minute').toEqual([ARMED, turned])
+  for (let i = 0; i < 4; i += 1) await advance(w, 2_000) // 10 s in: still 1h 59m
+  expect(w.writes, 'no write for the ticks inside one label minute').toEqual([ARMED, turned])
+  await advance(w, 60_000) // 1h 58m 50s left
+  expect(w.writes).toEqual([ARMED, turned, { nextAt: ARMED.nextAt, minute: 118 }])
+  expect(await labelOf(ui)).toBe('wake in 1h 58m')
   await ui.unmount()
 })
 
@@ -289,7 +297,7 @@ test('W9d at the due time before the claim the label is wake in <1m, never a das
 })
 
 test('W10 an armed state met by a fresh module scope (a hot reload) fires once at its due time', async ($, on) => {
-  const w = await wakeWorld($, on, { seed: { nextAt: START + 20_000, minute: Math.floor(START / MIN) } })
+  const w = await wakeWorld($, on, { seed: { nextAt: START + 20_000, minute: 0 } })
   await advance(w, 10_000)
   expect(w.sent).toHaveLength(0)
   await advance(w, 10_000) // now = nextAt
@@ -308,5 +316,45 @@ test('W11 the wake prompt (origin plugin) is not recorded as the last question',
   expect(w.sent).toHaveLength(1)
   expect(w.sent[0]?.origin).toMatchObject({ kind: 'plugin' })
   expect(w.keys, 'noteSubmit wrote no lastQuestion').not.toContain('lastQuestion')
+  await $.prompt.submit(submitOf('a question the person typed', COMPOSER)) // the control: the hook does see prompts, and records a person's own
+  await spin()
+  expect(w.keys, 'a composer prompt IS recorded').toContain('lastQuestion')
+  await ui.unmount()
+})
+
+// --- a wake that is lost, and a guard that is lost (code review) ---
+
+test('W13 a wake prompt that never settles: the next due time skips with a toast; the one after (4 h) counts it as lost and sends again', async ($, on) => {
+  const w = await wakeWorld($, on)
+  w.holds[0] = new Promise<void>(() => undefined) // the person removed it from the queue: it never settles
+  const ui = await mountBand($)
+  await pressWake(ui)
+  await advance(w, 2 * H)
+  expect(w.sent).toHaveLength(1)
+  await advance(w, 2 * H)
+  expect(w.sent, 'the first prompt still counts as waiting').toHaveLength(1)
+  expect(wakeToasts(w).at(-1)).toBe(SKIP)
+  expect(lastWake(w)?.nextAt, 'the due time was claimed').toBe(w.clk.now + 2 * H)
+  await advance(w, 2 * H)
+  expect(w.sent, 'a marker two intervals old is lost: send again').toHaveLength(2)
+  expect(wakeToasts(w).filter(t => t === SKIP)).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('W14 a tick that holds the guard for 30 more ticks is lost: the next one goes on and sends', async ($, on) => {
+  const w = await wakeWorld($, on)
+  const ui = await mountBand($)
+  await pressWake(ui)
+  w.clk.now = ARMED.nextAt
+  w.afterRead = async () => {
+    w.afterRead = undefined
+    await new Promise<void>(() => undefined) // the first tick never comes back from its state read
+  }
+  await advance(w, 0)
+  for (let i = 0; i < WAKE_GUARD_TICKS - 1; i += 1) await advance(w, 0)
+  expect(w.sent, 'the guard turned away 29 ticks').toHaveLength(0)
+  await advance(w, 0) // the 30th turned away: it goes on
+  expect(w.sent).toHaveLength(1)
+  expect(lastWake(w)?.nextAt).toBe(ARMED.nextAt + 2 * H)
   await ui.unmount()
 })

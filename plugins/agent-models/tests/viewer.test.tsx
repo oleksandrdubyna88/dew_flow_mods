@@ -676,8 +676,8 @@ test('F3 the rows of the mod\'s own /login are dropped, a note sent with Apply i
 // --- the wake button in the account row (1.7.0) ---
 
 // The signed-in account row is [ dev@example.com ]  [ login ]  [ tasks (0) ]  [ last answer ▾ ] = 64 cells; the armed wake adds
-// the gap and `[ wake in 1h 59m ]` (14 + 4): 84, which wraps in 70 columns. agents 0 + the fixed rows + `hello` 1 = `used`.
-const WAKE_COLUMNS = 70
+// the gap and `[ wake in 1h 59m ]` (14 + 4): 84, which wraps in 80 columns, where the off label (`[ wake 2h ]`, 77) would still fit. agents 0 + the fixed rows + `hello` 1 = `used`.
+const WAKE_COLUMNS = 80
 const ROW_CELLS = 19 + 2 + 9 + 2 + 13 + 2 + 17
 const WAKE_CELLS = 2 + 14 + 4
 const wakeUsed = viewerFixedRows(WAKE_COLUMNS, false, undefined, undefined, VIEWER_NOTE, ROW_CELLS + WAKE_CELLS) + 1

@@ -102,8 +102,8 @@ export type Pin = { id: string; text: string }
 export type LimitsView = { isOpen: boolean; email?: string; fetchedAt?: number; value?: Limits; isFailed: boolean }
 
 /**
- * The wake button (1.7.0): `nextAt` is the epoch ms of the next fire (`$.clock.now()`'s milliseconds), `minute` the clock minute (epoch ms / 60000,
- * floored) the 2 s tick last wrote: only its change matters, it draws the label again as the time runs down. null: off. Absent in a
+ * The wake button (1.7.0): `nextAt` is the epoch ms of the next fire (`$.clock.now()`'s milliseconds), `minute` the whole minutes left to `nextAt` (floored) the 2 s tick last wrote: only its change matters,
+ * it draws the label again at the moment the label's own minutes turn. null: off. Absent in a
  * state stored before 1.7.0: read it as null.
  */
 export type Wake = { nextAt: number; minute: number } | null

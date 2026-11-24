@@ -2,7 +2,7 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import type { On, PromptSubmitResult } from 'claude-code'
 
 import type { Wake } from '../types'
-import { gate } from './answer-fixtures'
+import { gate, macrotask } from './answer-fixtures'
 import { BAND, ok, ownClock, spin } from './limits-fixtures'
 import type { OwnClock } from './limits-fixtures'
 
@@ -88,9 +88,21 @@ export const wakeWorld = async ($: Engine, on: On, o: { now?: number; seed?: Wak
   return w
 }
 
-/** The clock moves `ms` on and one period of the 2 s timer runs; then time for what the tick started. */
-export const advance = async (w: WakeWorld, ms: number): Promise<void> => {
+// The engine asks for the timer's next period a moment AFTER the last one ran (and after the redraw its writes cause); a clock moved before
+// that has no period to resolve and the tick is lost. So the clock moves only once a period is pending (bounded: 1 s of real time).
+export const untilPeriod = async (clk: OwnClock): Promise<void> => {
+  for (let i = 0; i < 200 && !clk.isWaiting(); i += 1) await macrotask(5)
+}
+
+/** The clock moves `ms` on and one period of the 2 s timer runs (once it is pending); resolves when the tick's call has returned. */
+export const tick = async (w: WakeWorld, ms: number): Promise<void> => {
+  await untilPeriod(w.clk)
   await w.clk.tick(ms)
+}
+
+/** The same, then time for what the tick started. */
+export const advance = async (w: WakeWorld, ms: number): Promise<void> => {
+  await tick(w, ms)
   await spin()
 }
 
