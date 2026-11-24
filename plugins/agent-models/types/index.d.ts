@@ -101,6 +101,13 @@ export type Pin = { id: string; text: string }
  */
 export type LimitsView = { isOpen: boolean; email?: string; fetchedAt?: number; value?: Limits; isFailed: boolean }
 
+/**
+ * The wake button (1.7.0): `nextAt` is the epoch ms of the next fire (`$.clock.now()`'s milliseconds), `minute` the whole minutes left to `nextAt` (floored) the 2 s tick last wrote: only its change matters,
+ * it draws the label again at the moment the label's own minutes turn. null: off. Absent in a
+ * state stored before 1.7.0: read it as null.
+ */
+export type Wake = { nextAt: number; minute: number } | null
+
 declare module 'claude-code' {
   interface PluginState {
     'agent-models': {
@@ -119,6 +126,8 @@ declare module 'claude-code' {
       pins: readonly Pin[]
       /** Whether the list under the `last answer` button is open (1.6.0). Absent in a state stored before 1.6.0: read it as false. */
       answerListOpen: boolean
+      /** The wake (1.7.0): null is off. Absent in a state stored before 1.7.0: read it as null. */
+      wake: Wake
     }
   }
 }

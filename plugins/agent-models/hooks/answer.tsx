@@ -88,13 +88,14 @@ export const isAnswerShown = (viewport: { isFullscreen?: boolean } | undefined):
 export const answerLabel = (isOpen: boolean): string => `${ANSWER_LABEL} ${isOpen ? '▴' : '▾'}`
 
 /** The cells the account row takes when it is drawn without the messages button (the open viewer): what wraps at the band's width. */
-export function accountRowCells(row: { account: string; isKnown: boolean; isLoginPending: boolean; tasks: string; isAnswerShown: boolean }): number {
+export function accountRowCells(row: { account: string; isKnown: boolean; isLoginPending: boolean; tasks: string; wake: string; isAnswerShown: boolean }): number {
   const framed = (label: string): number => label.length + BUTTON_FRAME
   return (
     (row.isKnown ? framed(row.account) : row.account.length) +
     GAP + framed('login') + (row.isLoginPending ? ' logging in…'.length : 0) +
     GAP + framed(row.tasks) +
-    (row.isAnswerShown ? GAP + framed(answerLabel(false)) : 0)
+    (row.isAnswerShown ? GAP + framed(answerLabel(false)) : 0) +
+    GAP + framed(row.wake)
   )
 }
 

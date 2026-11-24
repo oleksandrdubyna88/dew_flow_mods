@@ -7,6 +7,7 @@ import {
   VIEWER_NOTE, viewerFixedRows, WRAPPER_TAGS,
 } from '../hooks/prompts'
 import { CLEAN, DIRTY, FAILURES, logRoad, ok, SID, two } from './transcript-fixtures'
+import { answerWith, MEASURED, world } from './limits-fixtures'
 import type { Answer } from './transcript-fixtures'
 
 const u = (text: string): SessionMessage => ({ role: 'user', text, toolUses: [] })
@@ -671,3 +672,27 @@ test('F3 the rows of the mod\'s own /login are dropped, a note sent with Apply i
   expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('a note sent with Apply')
   await leave(ui)
 })
+
+// --- the wake button in the account row (1.7.0) ---
+
+// The signed-in account row is [ dev@example.com ]  [ login ]  [ tasks (0) ]  [ last answer ▾ ] = 64 cells; the armed wake adds
+// the gap and `[ wake in 1h 59m ]` (14 + 4): 84, which wraps in 80 columns, where the off label (`[ wake 2h ]`, 77) would still fit. agents 0 + the fixed rows + `hello` 1 = `used`.
+const WAKE_COLUMNS = 80
+const ROW_CELLS = 19 + 2 + 9 + 2 + 13 + 2 + 17
+const WAKE_CELLS = 2 + 14 + 4
+const wakeUsed = viewerFixedRows(WAKE_COLUMNS, false, undefined, undefined, VIEWER_NOTE, ROW_CELLS + WAKE_CELLS) + 1
+for (const [maxRows, header] of [[wakeUsed, 'Message 1 / 1'], [wakeUsed - 1, 'Message 1 / 1 (scroll for more)']] as const) {
+  test(`W12 the account row of the open viewer counts the drawn wake label: at ${maxRows} rows the header says "${header}"`, async ($, on) => {
+    on('session.messages', () => ({ value: [{ role: 'user', text: 'hello', toolUses: [] }] }))
+    const now = 1_000_000
+    on('state.get', { plugin: 'agent-models', key: 'wake' }, () => ({ value: { value: { nextAt: now + 119 * 60_000, minute: Math.floor(now / 60_000) }, version: 0 } }))
+    await world($, on, answerWith(200, MEASURED), undefined, { now })
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: WAKE_COLUMNS, maxRows, isCollapsed: false }, surface: 'terminal' })
+    await ui.press({ key: 'my-messages' })
+    await ui.redraw()
+    expect((await ui.find({ type: 'Button', key: 'wake' }))?.props.label).toBe('wake in 1h 59m')
+    expect((await ui.find({ type: 'Text', text: /^Message / }))?.text).toBe(header)
+    await ui.press({ key: 'close' })
+    await ui.unmount()
+  })
+}

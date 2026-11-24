@@ -382,21 +382,21 @@ test('T13b a refused write of lastQuestion breaks nothing and leaves the value a
 const LONG = `${'long.nam.'.repeat(10)}@example.com` // 102 characters: with the other buttons it wraps to two rows at 80 columns, not three
 
 test('T14 the viewer counts the account row wrapped at its width, not as one row', () => {
-  const short = accountRowCells({ account: 'dev@example.com', isKnown: true, isLoginPending: false, tasks: tasksLabel(0), isAnswerShown: true })
+  const short = accountRowCells({ account: 'dev@example.com', isKnown: true, isLoginPending: false, tasks: tasksLabel(0), wake: 'wake 2h', isAnswerShown: true })
   // [ dev@example.com ]  [ login ]  [ tasks (0) ]  [ last answer ▾ ]
-  expect(short).toBe(19 + 2 + 9 + 2 + 13 + 2 + 17)
+  expect(short).toBe(19 + 2 + 9 + 2 + 13 + 2 + 17 + 2 + 11) // 1.7.0: + the gap and `[ wake 2h ]`
   expect(viewerFixedRows(80, false, undefined, undefined, VIEWER_NOTE, short)).toBe(viewerFixedRows(80, false, undefined))
-  const long = accountRowCells({ account: LONG, isKnown: true, isLoginPending: false, tasks: tasksLabel(0), isAnswerShown: true })
-  expect(long).toBe(LONG.length + 4 + 2 + 9 + 2 + 13 + 2 + 17)
-  expect(viewerFixedRows(80, false, undefined, undefined, VIEWER_NOTE, long)).toBe(viewerFixedRows(80, false, undefined) + 1)
-  const hidden = accountRowCells({ account: LONG, isKnown: true, isLoginPending: false, tasks: tasksLabel(0), isAnswerShown: false })
-  expect(hidden).toBe(long - 19) // no button, no gap
-  expect(accountRowCells({ account: 'account ?', isKnown: false, isLoginPending: true, tasks: tasksLabel(3), isAnswerShown: false }))
-    .toBe('account ?'.length + 2 + 9 + ' logging in…'.length + 2 + 13)
+  const long = accountRowCells({ account: LONG, isKnown: true, isLoginPending: false, tasks: tasksLabel(0), wake: 'wake 2h', isAnswerShown: true })
+  expect(long).toBe(LONG.length + 4 + 2 + 9 + 2 + 13 + 2 + 17 + 2 + 11)
+  expect(viewerFixedRows(80, false, undefined, undefined, VIEWER_NOTE, long)).toBe(viewerFixedRows(80, false, undefined) + 2) // 164 cells: three rows at 80
+  const hidden = accountRowCells({ account: LONG, isKnown: true, isLoginPending: false, tasks: tasksLabel(0), wake: 'wake 2h', isAnswerShown: false })
+  expect(hidden).toBe(long - 19) // no last answer button, no gap; the wake button stays
+  expect(accountRowCells({ account: 'account ?', isKnown: false, isLoginPending: true, tasks: tasksLabel(3), wake: 'wake 2h', isAnswerShown: false }))
+    .toBe('account ?'.length + 2 + 9 + ' logging in…'.length + 2 + 13 + 2 + 11)
 })
 
-// agents 0 + fixed (2 + the account row 2) + the note (118 characters at 80: 2 rows) + `hello` 1 = 7; one row less would say 6
-for (const [maxRows, header] of [[7, 'Message 1 / 1'], [6, 'Message 1 / 1 (scroll for more)']] as const) {
+// agents 0 + fixed (2 + the account row 3: 1.7.0, with the wake button 164 cells) + the note (118 characters at 80: 2 rows) + `hello` 1 = 8; one row less would say 7
+for (const [maxRows, header] of [[8, 'Message 1 / 1'], [7, 'Message 1 / 1 (scroll for more)']] as const) {
   test(`T14b a long email wraps the account row: at ${maxRows} rows the header says "${header}"`, async ($, on) => {
     on('session.messages', () => ({ value: [{ role: 'user', text: 'hello', toolUses: [] }] }))
     await world($, on, answerWith(200, MEASURED), undefined, { email: LONG })
