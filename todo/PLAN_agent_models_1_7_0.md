@@ -51,26 +51,40 @@ end with the limit message, as a typed prompt does; the next fire tries again).
 
 ### B. The button (`hooks/wake.tsx`, drawn by `accountRow` after `last answer`, or after `tasks (n)` where `last answer` is not drawn)
 
-- Off: `[ wake 2h ]`. On: `[ wake in 1h 52m ]` (`resetText` of the minutes to `nextAt`; `wake in <1m` under a minute; `wake on`
-  when the draw's clock read is refused). The on label has another colour than the off one (the colour is not the only
-  sign: the text differs too).
+- Off: `[ wake 2h ]`. On: `[ wake in 1h 52m ]` (`resetText` of the minutes to `nextAt`; `wake in <1m` under a minute and
+  also when `now >= nextAt` before the tick claims the fire, never `wake in —`; `wake on` when the draw's clock read is
+  refused). The on label has another colour than the off one (the colour is not the only sign: the text differs too).
 - A press when off: `nextAt = now + 2 h`, toast `wake: on — every 2 h, the first at +2h; press again to stop`. A press when on:
-  null, toast `wake: off`. A refused clock or state write: toast `wake: <reason>`, nothing changes.
-- `accountRowCells` counts the button at its widest off label (`wake 2h`) plus the on label's extra (`wake in 1h 59m`); the
-  estimate only moves the `(scroll for more)` header.
+  null, toast `wake: off`. A refused clock or state write: toast `wake: <reason>`, nothing changes. A press off does not
+  take back a wake prompt the engine already holds (see C).
+- `accountRowCells` takes the drawn wake label as a string, as it takes the tasks label (its length + the button frame +
+  the gap); the estimate only moves the `(scroll for more)` header.
+- Engine rules (as in `limits.tsx` and `answer.tsx`): `wake.tsx` exports `currentWake($)` for the draw (a `read($, x)` is
+  allowed only in the file that writes the atom), and every function that takes `$` (`wakeButton`, `pressWake`,
+  `wakeTick`, `clearWake`, `currentWake`) is a `function` declaration. The draw does not read the clock a second time: the
+  wake joins the one existing draw clock read (`isShown || state.startedAt !== undefined || wake !== null`, `register.tsx`).
 
 ### C. The fire (`wakeTick($)` in `hooks/wake.tsx`, added to `tick`)
 
 - Each 2 s tick: read `wake`; null → done (one state read, no clock). Else read the clock; when the minute changed, write it
-  (the label redraws). When `now >= nextAt`:
-  1. write `nextAt = now + 2 h` FIRST (so a second tick, a reload or a slow submit never fires twice; after a machine
-     sleep past several due times it fires once, not once per missed slot);
-  2. if a main-loop turn is running (a module flag set by `turn.start`, cleared by `turn.complete`, both only for
-     `e.agentId === undefined`), skip this fire: the session is awake. After a hot reload the flag starts false (a fire
-     then waits behind the running turn, which the engine does by itself);
-  3. else `void $.prompt.submit({ text: 'продолжай автономно', asUser: true })`, not awaited (the tick is never held);
-     its result or rejection makes one toast (`wake: sent` / `wake: <reason>`).
-- `session.end` writes null, like the other session values.
+  with `update($, wake, w => w === null ? null : { ...w, minute })` (a press off between the read and the write stays off).
+- When `now >= nextAt`, CLAIM the fire with one `update($, wake, w => w !== null && now >= w.nextAt ? { ...w, nextAt: now + 2h } : w)`
+  (`update` writes with `ifVersion` and tries again on a miss); submit only when this call made the change. So two ticks
+  that overlap (the tick is not awaited, `register.tsx`), a press off between the read and the write, or a reload never
+  fire twice; after a machine sleep past several due times it fires once, not once per missed slot. A module guard set
+  before the first await (as `isStarting` in `register.tsx`) also keeps a second tick of this scope out while one claims.
+- No busy check of its own: the engine holds a plugin's prompt until the session is idle (types: "a turn of its own, once
+  the session is idle"). A fire during a long turn therefore runs once, right after that turn ends. That is the goal (the
+  session goes on working) and needs no turn hooks, so a hot reload loses nothing.
+- In flight: `$.prompt.submit` settles only when its turn starts. While the last wake's submit has not settled (a module
+  marker), a due time is claimed (`nextAt` moves) but nothing new is submitted, so the prompts never pile up behind a long
+  turn. After a hot reload the marker starts empty: at most one more prompt can wait behind the same turn (accepted;
+  written in the owner notes).
+- The submit: `void $.prompt.submit({ text: 'продолжай автономно', asUser: true })`, not awaited (the tick is never held).
+  Its result goes through `submitRefusal` (`tasks.tsx`): a `{ drop }` or a rejection toasts `wake: <reason>`; else
+  `wake: sent`. The wake stays on either way; the next due time fires again.
+- `session.end` writes null (in the existing `Promise.all` before `next(e)`, `register.tsx`: the exit has one short bound).
+  `session.end` also fires on `/clear` and on a resume, so `/clear` turns the wake off; the owner notes say so.
 - Never rejects; a refused state call or clock waits for the next tick.
 
 ### D. Version and text
@@ -82,9 +96,9 @@ end with the limit message, as a typed prompt does; the next fire tries again).
 
 | File | Change |
 |---|---|
-| `plugins/agent-models/hooks/wake.tsx` | new: the atom, `wakeButton`, `pressWake`, `wakeTick`, `clearWake`, the turn flag setters, the label helpers |
-| `plugins/agent-models/hooks/register.tsx` | the button in `accountRow`, `wakeTick` in `tick`, the flag in `turn.start`/`turn.complete`, `clearWake` in `session.end`, the read in the draw |
-| `plugins/agent-models/hooks/answer.tsx` | `accountRowCells` counts the wake button |
+| `plugins/agent-models/hooks/wake.tsx` | new: the atom, `wakeButton`, `pressWake`, `wakeTick`, `clearWake`, `currentWake`, the label helpers |
+| `plugins/agent-models/hooks/register.tsx` | the button in `accountRow`, `wakeTick` in `tick`, `clearWake` in `session.end`, `currentWake` and the shared clock read in the draw |
+| `plugins/agent-models/hooks/answer.tsx` | `accountRowCells` takes the drawn wake label |
 | `plugins/agent-models/types/index.d.ts` | `Wake`, `wake` |
 | `plugins/agent-models/.claude-plugin/plugin.json` | 1.7.0, the description |
 | `plugins/agent-models/tests/wake.test.tsx`, `wake-fixtures.tsx` | new tests (below) |
@@ -92,7 +106,7 @@ end with the limit message, as a typed prompt does; the next fire tries again).
 
 ## Build order
 
-1. Tests W1–W9 written first and run RED against 1.6.1.
+1. Tests W1–W12 written first and run RED against 1.6.1.
 2. `wake.tsx`, the state type, the register wiring, the row cells; the tests GREEN; the whole mod suite GREEN (R4 flakes
    about one run in eight, known; it is not re-run to get green).
 3. `claude plugin validate --json` + `tools/type-baseline.mjs`, `tsc`, `npm test`, `copy-proof`, `mods-gate`.
@@ -104,12 +118,17 @@ end with the limit message, as a typed prompt does; the next fire tries again).
 - W3 a press when on writes null and toasts `wake: off`.
 - W4 a tick before `nextAt` submits nothing; a tick at `nextAt` submits `продолжай автономно` with `asUser: true` once and
   moves `nextAt` to now + 2 h before the submit settles.
-- W5 two ticks at the same due time (the first submit not settled) submit once.
-- W6 a due tick while a main-loop turn runs submits nothing and still moves `nextAt`; a subagent's turn does not count.
+- W5 two ticks at the same due time that both read before either writes submit once; a press off between a tick's read
+  and its claim gives no submit, and the state stays null.
+- W6 a due tick while the last wake submit has not settled moves `nextAt` and submits nothing; after it settles, the next
+  due time submits again.
 - W7 a tick long after `nextAt` (a sleep over three slots) submits once, `nextAt = now + 2h`.
-- W8 a rejected submit toasts the reason, stays on, and the next due time fires again.
-- W9 a state from before 1.7.0 (no `wake`) draws `wake 2h`; `session.end` writes null; the minute write happens only when
-  the minute changes.
+- W8 a rejected submit and a `{ drop }` result each toast the reason, stay on, and the next due time fires again.
+- W9 a state from before 1.7.0 (no `wake`) draws `wake 2h`; `session.end` writes null before the end step; the minute
+  write happens only when the minute changes; at `now >= nextAt` before the claim the label is `wake in <1m`.
+- W10 an armed state met by a fresh module scope (a hot reload) fires once at its due time.
+- W11 the wake prompt (origin `plugin`) is not recorded as the last question by `noteSubmit`.
+- W12 the viewer header (`viewer.test.tsx`): with the wake on, the account row counts the drawn wake label.
 
 ## Owner checks (after the release reaches this machine)
 
@@ -117,6 +136,9 @@ end with the limit message, as a typed prompt does; the next fire tries again).
 2. Armed while idle: two hours later the session gets the turn `продолжай автономно` and works on.
 3. Armed when the 5-hour limit is used up: a wake before the reset fails like a typed prompt; the first wake after the
    reset works.
+
+Notes for the owner: a wake that comes while Claude works runs right after that turn ends; `/clear` turns the wake off; a
+press off does not take back a wake prompt that is already waiting for the turn to end.
 
 ## Definition of done
 
