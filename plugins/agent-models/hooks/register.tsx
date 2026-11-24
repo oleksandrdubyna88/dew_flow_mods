@@ -14,6 +14,7 @@ import {
   noteSubmit, restoreQuestion, retryPending,
 } from './answer'
 import { clearPins, currentPins, pinnedRow } from './pins'
+import { clearWake, currentWake, wakeButton, wakeLabel, wakeTick } from './wake'
 
 const models = atom({ plugin: 'agent-models', key: 'models' } as const, {} as Record<string, string>)
 const rows = atom({ plugin: 'agent-models', key: 'rows' } as const, [] as AgentRow[])
@@ -37,10 +38,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   }
 }
 
-// The 2 s timer's work: the agent rows, the limits line (its minute, a passed reset's fetch) and the account retry (an unread or
-// stale unknown account is read again without a draw or a turn). Each never rejects.
+// The 2 s timer's work: the agent rows, the limits line (its minute, a passed reset's fetch), the account retry (an unread or
+// stale unknown account is read again without a draw or a turn) and the wake (hooks/wake.tsx). Each never rejects.
 const tick = async ($: EngineInterface): Promise<void> => {
-  await Promise.all([refresh($), tickLimits($), retryAccount($)])
+  await Promise.all([refresh($), tickLimits($), retryAccount($), wakeTick($)])
 }
 
 // Reads when the last read is 60 s old; also repairs a login left pending past its ceiling.
@@ -207,6 +208,8 @@ type Page = {
   pins: readonly Pin[] // the rows after it
   isAnswerListOpen: boolean
   hasAnswerButton: boolean // false on the terminal's main screen, where no transcript scroll works
+  wakeLabel: string // the wake button's label of this draw (the viewer counts what is drawn)
+  isWakeOn: boolean
 }
 
 // The prompt is drawn whole; the band scrolls a taller tree itself, so the header only says so.
@@ -217,7 +220,7 @@ const pageRows = ($: EngineInterface, e: RenderEvent, page: Page) => {
   const prompt = texts[index] ?? ''
   const note = view.isFromLog ? LOG_NOTE : VIEWER_NOTE
   const { text, isKnown } = accountLabel(page.account)
-  const accountCells = accountRowCells({ account: text, isKnown, isLoginPending: page.isLoginPending, tasks: tasksLabel(page.tasks.items.length), isAnswerShown: page.hasAnswerButton })
+  const accountCells = accountRowCells({ account: text, isKnown, isLoginPending: page.isLoginPending, tasks: tasksLabel(page.tasks.items.length), wake: page.wakeLabel, isAnswerShown: page.hasAnswerButton })
   const fixed = viewerFixedRows(props.bodyColumns, view.isCapped, page.login.reason, limitsText(page.limits, emailOf(page.account), page.limitsNow), note, accountCells)
   const used = agentCount + fixed + textRows(prompt, props.bodyColumns)
   const more = used > props.maxRows ? ' (scroll for more)' : ''
@@ -232,8 +235,9 @@ const pageRows = ($: EngineInterface, e: RenderEvent, page: Page) => {
   )
 }
 
-// The account row: [ messages ]  <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ] while the viewer is closed (`lead` is the
-// messages button), <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ] above an open viewer. `last answer` (hooks/answer.tsx) is
+// The account row: [ messages ]  <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ]  [ wake 2h ] while the viewer is closed (`lead` is the
+// messages button), <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ]  [ wake 2h ] above an open viewer.
+// The wake button (hooks/wake.tsx) arms a send of `продолжай автономно` every 2 hours; its label counts down. `last answer` (hooks/answer.tsx) is
 // left out on the terminal's main screen, where no transcript scroll works; its list (the last question, then the pins) opens under
 // the row. The signed-in <account> is a button: a press opens the limits line under the row (its numbers coloured by what is left,
 // with a red Close beside it). Then the last login refusal, and the tasks view or the list (never drawn beside the viewer: each
@@ -256,6 +260,8 @@ const accountRow = ($: EngineInterface, e: RenderEvent, page: Page, lead?: Retur
         {tasksButton($, e, page.tasks, () => closeForTasks($))}
         {page.hasAnswerButton ? <Text>{'  '}</Text> : null}
         {page.hasAnswerButton ? answerButton($, e, page.isAnswerListOpen, () => closeForList($)) : null}
+        <Text>{'  '}</Text>
+        {wakeButton($, e, page.wakeLabel, page.isWakeOn)}
       </Box>
       {limitsRow($, e, page.limits, emailOf(page.account), page.limitsNow)}
       {page.login.reason !== undefined && <Text dimColor>{refusalNote(page.login.reason)}</Text>}
@@ -325,7 +331,7 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
-    await Promise.all([clearQuestion($), clearPins($), clearAnswerList($)]) // before the end step: the exit shares one short bound
+    await Promise.all([clearQuestion($), clearPins($), clearAnswerList($), clearWake($)]) // before the end step: the exit shares one short bound
     return next(e)
   })
 
@@ -366,7 +372,7 @@ export const register: Register = on => {
       return next(e)
     }
     const below = await next(e) // the rest of the chain draws under our band, never instead of it
-    const [list, view, acc, state, taskList, limitsView, question, pinList, isAnswerListOpen] = await Promise.all([
+    const [list, view, acc, state, taskList, limitsView, question, pinList, isAnswerListOpen, wake] = await Promise.all([
       read($, rows),
       currentViewer($),
       currentAccount($),
@@ -376,14 +382,15 @@ export const register: Register = on => {
       currentLastQuestion($),
       currentPins($),
       currentAnswerListOpen($),
+      currentWake($),
     ])
     const texts = view.isOpen ? await currentPrompts($) : [] // the prompts of a whole session are read only while they are shown
     void readAccountOnDraw($, acc) // not awaited: a draw is never delayed; it reads only an unread or a stale unknown account
     // The open limits line draws a time that runs down: it reads `limitsMinute`, so the tick's write of a new minute draws the band
-    // again. A closed line does not. One clock read serves both needs, a pending login and the shown line; an idle frame asks none.
+    // again. A closed line does not. One clock read serves every need, a pending login, the shown line and an armed wake; an idle frame asks none.
     const isShown = isLimitsShown(limitsView, emailOf(acc))
     if (isShown) await watchLimitsMinute($)
-    const clock = isShown || state.startedAt !== undefined ? await limitsClock($) : null // null: not asked, or refused
+    const clock = isShown || state.startedAt !== undefined || wake !== null ? await limitsClock($) : null // null: not asked, or refused
     const now = state.startedAt === undefined ? 0 : (clock ?? 0) // the login's check: a refused clock reads 0 (as `nowOrZero`)
     const limitsNow = isShown ? clock : null // the line's own rule: a refused clock is a dash, never a time from 0
     const page = {
@@ -401,6 +408,8 @@ export const register: Register = on => {
       pins: pinList,
       isAnswerListOpen,
       hasAnswerButton: isAnswerShown(e.viewport),
+      wakeLabel: wakeLabel(wake, clock), // the wake's own time runs down through its minute in state, which the tick writes
+      isWakeOn: wake !== null,
     }
     const { Box } = $.ui.resolve(e)
     return (

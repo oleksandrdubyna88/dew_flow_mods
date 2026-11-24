@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
-  advance, gate, H, labelOf, lastWake, mountBand, MIN, ON_TOAST, pressWake, spin, START, TEXT, wakeButton, wakeText, wakeToasts, wakeWorld, WAKE_KEY,
+  advance, gate, H, labelOf, lastWake, mountBand, MIN, ON_TOAST, pressWake, spin, START, TEXT, wakeText, wakeToasts, wakeWorld,
 } from './wake-fixtures'
 
 // The wake button (1.7.0): a press arms a timer in the mod; each 2 s tick sends `продолжай автономно` once the due time has come.
@@ -68,7 +68,7 @@ test('W3 a press when on writes null and toasts wake: off', async ($, on) => {
 
 test('W3b a refused state write toasts wake: <reason> and changes nothing', async ($, on) => {
   const w = await wakeWorld($, on)
-  on('state.set', WAKE_KEY, () => ({ deny: 'the store said no' }))
+  w.isWriteRefused = true
   const ui = await mountBand($)
   await pressWake(ui)
   expect(wakeToasts(w)).toHaveLength(1)
@@ -112,21 +112,61 @@ test('W4 a tick before nextAt sends nothing; the tick at nextAt sends once and m
   await ui.unmount()
 })
 
+test('W5 two ticks at the same due time, the first still holding the state it read, send once', async ($, on) => {
+  const w = await wakeWorld($, on)
+  const ui = await mountBand($)
+  await pressWake(ui)
+  w.clk.now = ARMED.nextAt
+  const g = gate()
+  w.afterRead = async () => {
+    w.afterRead = undefined
+    await g.wait // the first tick holds the due state it read
+  }
+  const first = w.clk.tick(0)
+  await spin()
+  await advance(w, 0) // a second tick of the same timer starts while the first one has not claimed
+  expect(w.sent).toHaveLength(0)
+  g.release()
+  await first
+  await spin()
+  expect(w.sent).toHaveLength(1)
+  expect(lastWake(w)?.nextAt).toBe(ARMED.nextAt + 2 * H)
+  await ui.unmount()
+})
+
+test('W5c a tick whose due state was claimed or re-armed by someone else before its claim sends nothing and moves nothing', async ($, on) => {
+  const w = await wakeWorld($, on)
+  const ui = await mountBand($)
+  await pressWake(ui)
+  w.clk.now = ARMED.nextAt
+  const g = gate()
+  w.afterRead = async () => {
+    w.afterRead = undefined
+    await g.wait
+  }
+  const ticking = w.clk.tick(0)
+  await spin()
+  await pressWake(ui) // off
+  await pressWake(ui) // on again: the due time is now + 2h, as if another scope had claimed this one
+  expect(lastWake(w)?.nextAt).toBe(ARMED.nextAt + 2 * H)
+  g.release()
+  await ticking
+  await spin()
+  expect(w.sent).toHaveLength(0)
+  expect(lastWake(w)?.nextAt).toBe(ARMED.nextAt + 2 * H)
+  await ui.unmount()
+})
+
 test('W5b a press off between a tick\'s read and its claim gives no send, and the state stays null', async ($, on) => {
   const w = await wakeWorld($, on)
   const ui = await mountBand($)
   await pressWake(ui)
   w.clk.now = ARMED.nextAt
   const g = gate()
-  let isHolding = true
-  on('state.get', WAKE_KEY, async (_, e, next) => {
-    const answer = await next(e)
-    if (isHolding) {
-      isHolding = false
-      await g.wait // the tick holds the due state it read
-    }
-    return answer
-  })
+  w.afterRead = async () => {
+    w.afterRead = undefined
+    await g.wait // the tick holds the due state it read; later reads (the press) go through
+  }
   const ticking = w.clk.tick(0)
   await spin()
   await pressWake(ui) // off
@@ -173,6 +213,7 @@ test('W7 a tick long after nextAt (a sleep over three slots) sends once; nextAt 
 
 test('W8 a rejected prompt toasts the reason, the wake stays on, and the next due time sends again', async ($, on) => {
   const w = await wakeWorld($, on)
+  // no `prompt.submit` answer beneath the plugin: the call rejects, as a refused one does (a hook that throws is skipped)
   w.behave = () => {
     throw new Error('the engine said no')
   }
@@ -180,11 +221,11 @@ test('W8 a rejected prompt toasts the reason, the wake stays on, and the next du
   await pressWake(ui)
   await advance(w, 2 * H)
   expect(w.sent).toHaveLength(1)
-  expect(wakeToasts(w).at(-1)).toMatch(/^wake: .*the engine said no/)
+  expect(wakeToasts(w).at(-1)).toMatch(/^wake: .*no implementation for prompt\.submit/)
   expect(lastWake(w)).not.toBeNull()
   await advance(w, 2 * H)
   expect(w.sent).toHaveLength(2)
-  expect(wakeToasts(w).filter(t => /the engine said no/.test(t))).toHaveLength(2)
+  expect(wakeToasts(w).filter(t => /no implementation for prompt\.submit/.test(t))).toHaveLength(2)
   await ui.unmount()
 })
 

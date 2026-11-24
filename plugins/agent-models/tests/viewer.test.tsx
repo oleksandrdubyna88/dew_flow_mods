@@ -687,11 +687,11 @@ for (const [maxRows, header] of [[wakeUsed, 'Message 1 / 1'], [wakeUsed - 1, 'Me
     const now = 1_000_000
     on('state.get', { plugin: 'agent-models', key: 'wake' }, () => ({ value: { value: { nextAt: now + 119 * 60_000, minute: Math.floor(now / 60_000) }, version: 0 } }))
     await world($, on, answerWith(200, MEASURED), undefined, { now })
-    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: WAKE_COLUMNS, maxRows }, surface: 'terminal' })
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: WAKE_COLUMNS, maxRows, isCollapsed: false }, surface: 'terminal' })
     await ui.press({ key: 'my-messages' })
     await ui.redraw()
     expect((await ui.find({ type: 'Button', key: 'wake' }))?.props.label).toBe('wake in 1h 59m')
-    expect((await text(ui, /^Message /))?.text).toBe(header)
+    expect((await ui.find({ type: 'Text', text: /^Message / }))?.text).toBe(header)
     await ui.press({ key: 'close' })
     await ui.unmount()
   })

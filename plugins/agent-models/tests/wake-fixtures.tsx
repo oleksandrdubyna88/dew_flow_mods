@@ -28,7 +28,9 @@ export type WakeWorld = {
   sent: Sent[] // every prompt that reached the bottom of the prompt chain
   events: string[] // `write:null` and `end`, in the order they happened
   holds: Record<number, Promise<void>> // the n-th prompt (from 0) waits for this before it settles
-  behave: (n: number) => PromptSubmitResult | undefined // undefined: accept; a throw: refuse
+  behave: (n: number) => PromptSubmitResult | undefined // undefined: accept (a hook that throws is skipped: the call then rejects, nothing beneath answers)
+  afterRead: (() => Promise<void>) | undefined // each read of the wake waits for this after it read (the answer is fixed), until the test unsets it
+  isWriteRefused: boolean // the engine refuses a write of the wake
 }
 
 /** The newest stored wake: undefined before the first write. */
@@ -38,7 +40,7 @@ export const wakeToasts = (w: WakeWorld): string[] => w.toasts.filter(t => t.sta
 /** A started session under the mod with a hand-steered clock (`w.clk`); `seed` is a stored wake the session already holds (a reload kept it). */
 export const wakeWorld = async ($: Engine, on: On, o: { now?: number; seed?: Wake } = {}): Promise<WakeWorld> => {
   const clk = ownClock(on, o.now ?? START)
-  const w: WakeWorld = { clk, writes: [], keys: [], toasts: [], sent: [], events: [], holds: {}, behave: () => undefined }
+  const w: WakeWorld = { clk, writes: [], keys: [], toasts: [], sent: [], events: [], holds: {}, behave: () => undefined, afterRead: undefined, isWriteRefused: false }
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] }))
   on('session.identity', () => ({ value: { deny: 'not a managed mod' } }))
@@ -56,15 +58,19 @@ export const wakeWorld = async ($: Engine, on: On, o: { now?: number; seed?: Wak
     }
     return next(e)
   })
-  if (o.seed !== undefined) {
-    let isWritten = false
-    on('state.set', WAKE_KEY, (_, e, next) => {
-      isWritten = true
-      return next(e)
-    })
-    const seed = o.seed
-    on('state.get', WAKE_KEY, (_, e, next) => (isWritten ? next(e) : { value: { value: seed, version: 0 } }))
-  }
+  // hooks beneath the plugins are registered before the first call on `$` (the session start below)
+  let isWritten = false
+  on('state.set', WAKE_KEY, (_, e, next) => {
+    if (w.isWriteRefused) return { deny: 'the store said no' }
+    isWritten = true
+    return next(e)
+  })
+  const seed = o.seed
+  on('state.get', WAKE_KEY, async (_, e, next) => {
+    const answer = seed !== undefined && !isWritten ? { value: { value: seed, version: 0 } } : await next(e)
+    await w.afterRead?.()
+    return answer
+  })
   on('ui.toast', (_, e) => {
     w.toasts.push(e.text)
     return { value: undefined }
@@ -88,7 +94,7 @@ export const advance = async (w: WakeWorld, ms: number): Promise<void> => {
   await spin()
 }
 
-export const mountBand = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') => $.ui.mount({ ...BAND, surface })
+export const mountBand = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') => $.ui.mount({ ...BAND, props: { ...BAND.props, isCollapsed: false }, surface })
 export const wakeButton = (ui: Ui) => ui.find({ type: 'Button', key: 'wake' })
 export const pressWake = async (ui: Ui) => {
   await ui.press({ key: 'wake' })

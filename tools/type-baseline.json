@@ -33,7 +33,7 @@
     },
     {
       "file": "tests/answer-list.test.tsx",
-      "message": "error TS2345: Argument of type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to parameter of type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<Account | undefined, number | boolean | Account | string[] | Record<string, string> | Login | ... 6 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly value?: MatcherValue<...> | undefined; readon...'. Type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<boolean | undefined, number | boolean | Account | string[] | Record<string, string> | Login | Viewer | ... 5 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly value?: MatcherValue<...> | undefine...'. Types of property 'key' are incompatible. Type '\"viewer\" | \"tasks\"' is not assignable to type 'MatcherValue<\"answerListOpen\", \"ac… [+400 chars]",
+      "message": "error TS2345: Argument of type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to parameter of type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<Account | undefined, number | boolean | { kind: \"unread\"; } | { kind: \"unknown\"; suffix: AccountSuffix | undefined; readAt: number; } | ... 14 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly va...'. Type '{ plugin: \"agent-models\"; key: \"viewer\" | \"tasks\"; }' is not assignable to type '{ readonly id?: readonly never[] | undefined; readonly previous?: MatcherValue<Wake | undefined, number | boolean | { kind: \"unread\"; } | { kind: \"unknown\"; suffix: AccountSuffix | undefined; readAt: number; } | ... 14 more ... | undefined> | undefined; readonly plugin?: MatcherValue<...> | undefined; readonly value...'. Types of property 'key' are incompatible. Type '\"viewer\" | \"tasks\"' is not assignable to type 'MatcherValue<\"wake\", \"account\" | \"… [+398 chars]",
       "count": 1
     },
     {
@@ -58,7 +58,7 @@
     },
     {
       "file": "tests/answer.test.tsx",
-      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ bodyColumns: number; maxRows: 6 | 7; hasSurvey: false; isWorking: false; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
+      "message": "error TS2741: Property 'isCollapsed' is missing in type '{ bodyColumns: number; maxRows: 8 | 7; hasSurvey: false; isWorking: false; scroll: { readonly offset: 0; readonly bodyRows: 11; }; view: {}; }' but required in type '{ hasSurvey: boolean; isCollapsed: boolean; isWorking: boolean; maxRows: number; bodyColumns: number; scroll: SiteScroll; view: SiteView; }'.",
       "count": 1
     },
     {
