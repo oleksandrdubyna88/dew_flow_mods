@@ -23,6 +23,7 @@ session (`session.end` clears them, as today).
   landed, the session-end epoch, wake rows skipped, the deep read, the tests L1–L15. Rejected with reasons: the coai
   copy-proof finding (the proof uses the tag agent-models--v1.6.0 above 1.6.0) and its R4 finding (a recorded follow-up;
   a red R4 blocks the merge like any red check).)
+- 1.1 · 2026-11-25 · agent · approach — the build: a late settle whose anchor uuid is already in the stored list leaves the list alone (a newer settle wrote it; test L12b), and the restore at session start also skips the wake text (L6b)
 
 ## What the code does today (read 2026-11-25 at `9b48665`)
 
