@@ -1,8 +1,9 @@
 # Architecture
 
 `dew_flow_mods` is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json`, name `dew-flow-mods`) that serves
-one plugin today, `agent-models`, a copy of the mod that lives in `dew_flow_conventions`. The repository has no service
-and no runtime of its own: it holds the catalog, the plugin folder, a few node tools that prove the copy, and CI.
+one plugin today, `agent-models`. The mod was copied from `dew_flow_conventions` at 1.6.0 and is developed here since
+1.6.1. The repository has no service and no runtime of its own: it holds the catalog, the plugin folder, a few node tools
+(the copy proof of the 1.6.0 start among them), and CI.
 
 ```mermaid
 flowchart TB
@@ -39,9 +40,9 @@ if its commit is not the current tip of `main` (a re-run of an old run). The jud
 green `ci` push run of that exact sha, forward only, a layout gate, a version gate and a free tag. Rulesets let only the
 deploy key create or move `release` and create any tag, and let nobody rewind or delete either (that is what the data
 ASKS of GitHub: nothing has been observed yet). The rules and the settings are data with a read-back: see
-[module_marketplace.md](module_marketplace.md). Nothing is released until the settings are applied and the first
-promotion runs; that promotion makes the tag `agent-models--v1.6.0`, and the copy
-proof reads it once `plugin.json` goes above 1.6.0.
+[module_marketplace.md](module_marketplace.md). The first promotion (2026-11-23) made the tag `agent-models--v1.6.0`, which the copy
+proof reads now that `plugin.json` is above 1.6.0. Tags so far: `agent-models--v1.6.0`, `--v1.6.1` (2026-11-23),
+`--v1.7.0` (2026-11-24), `--v1.8.0` (2026-11-25), each promoted with the owner's approval.
 
 What is on `release` runs on every machine with the owner's permissions and outside any sandbox: a change under
 `plugins/` needs a higher `plugin.json` version, and a plugin folder holds no `package.json`, lockfile or link that
@@ -49,11 +50,12 @@ leaves it.
 
 ## How a machine gets the mod
 
-Installed by hand today: `claude plugin marketplace add https://github.com/oleksandrdubyna88/dew_flow_mods.git#release`
-and `claude plugin install agent-models@dew-flow-mods` (HTTPS: SSH to GitHub does not work from every machine). The
-engine's own auto-update then follows `release`. Not built yet: the registration step in `dew_flow_conventions`, which
-writes the marketplace entry and `enabledPlugins` into user settings at session start and retires the old copy under
-`~/.claude/mods`.
+The registration step in `dew_flow_conventions` (`settings/hooks/lib/mods-marketplace.mjs`, release `cd19c17`, in all
+consumers since 2026-11-24) writes the marketplace entry and `enabledPlugins` into user settings at session start and
+retires the old copy under `~/.claude/mods`. By hand it is `claude plugin marketplace add
+https://github.com/oleksandrdubyna88/dew_flow_mods.git#release` and `claude plugin install agent-models@dew-flow-mods`
+(HTTPS: SSH to GitHub does not work from every machine). The engine's own auto-update then follows `release`: a new
+version arrives after a session has been open for a while and a restart.
 
 ## Interaction with dew_flow_conventions
 
@@ -61,11 +63,11 @@ writes the marketplace entry and `enabledPlugins` into user settings at session 
 |---|---|---|
 | The copy source: `mods/agent-models` at the commit named in `tools/copy-proof.mjs` and `ci.yml` | conventions to this repository, once, proved by C1 | built |
 | The family mount: `.agents/conventions` (submodule on its `release` branch), the Claude adapter in `.claude/` as byte copies, the three family checks | conventions to this repository, continuous | built |
-| The registration step: conventions' session start installs the marketplace entry on every machine | conventions writes the settings that point at this repository | coming (the conventions side of the plan, `todo/PLAN_dew_flow_mods.md` § D there) |
-| The next mod version (R4 fixed, 1.6.1) | built here, not in conventions | coming |
+| The registration step: conventions' session start installs the marketplace entry on every machine | conventions writes the settings that point at this repository | built (conventions release `cd19c17`) |
+| The mod versions after 1.6.0 (1.6.1, 1.7.0, 1.8.0) | built here, not in conventions | built |
 
-The old installer in conventions (`mods/agent-models` plus the nine consumers' pins) runs as before until the
-registration step retires it; this repository does not touch it.
+The registration step retired the old installer in conventions (`mods/agent-models` plus the consumers' pins); this
+repository never touched it.
 
 ## CI
 
