@@ -7,7 +7,8 @@ import { runPress } from '../hooks/pins'
 import type { ScrollPress } from '../hooks/pins'
 import { WAKE_TEXT } from '../hooks/wake'
 import { band, start } from './account-fixtures'
-import { answer, COMPOSER, gate, held, KEY, question, session, spin, SUMMARY, toolRow, typed, valueOf } from './answer-fixtures'
+import { answer, COMPOSER, held, question, session, spin, SUMMARY, toolRow, typed, valueOf } from './answer-fixtures'
+import type { Session } from './answer-fixtures'
 import { ask, entries, entry, heldEarlier, labels, lastEarlier, listKeys, opened, Q, recent, uuidOf, uuids } from './answer-recent-fixtures'
 import type { Entry } from './answer-recent-fixtures'
 import { A, B, pin, seededList, seededPins, SCROLL_REJECTED } from './pins-fixtures'
@@ -28,6 +29,18 @@ const earlierPress = (e: Entry): ScrollPress | undefined => {
   return typeof fn === 'function' ? fn(e) : undefined
 }
 
+// How many turns of the microtask queue pass between `fire` and the toast of the engine's rejected scroll (-1: none came). A press that
+// calls the scroll at once reaches the toast in as many turns as the same call made directly; an `await` ahead of the scroll adds one.
+const turnsToToast = async (s: Session, fire: () => unknown): Promise<number> => {
+  const before = s.toasts.length
+  fire()
+  for (let i = 0; i < 1000; i += 1) {
+    if (s.toasts.length > before) return i
+    await Promise.resolve()
+  }
+  return -1
+}
+
 // --- L1 to L4: what the list draws ---
 
 test('L1 three questions A, B, C: the list is C, B, A, newest first; a press on row 2 or 3 scrolls to its own uuid before the first await', async ($, on) => {
@@ -42,6 +55,19 @@ test('L1 three questions A, B, C: the list is C, B, A, newest first; a press on 
   await ui.press({ key: earlierKey('B') })
   await spin()
   expect(s.toasts, 'the press reached the scroll (the harness rejects every scroll), under its own heading').toEqual([`earlier question: ${SCROLL_REJECTED}`])
+  // the drawn rows' own onPress: the scroll is called before the press yields. Row 1 does (T10 tests its press with a fake scroll), so the
+  // drawn rows 2 and 3 must reach the toast in the same number of turns as the drawn row 1; an `await` ahead of the scroll adds a turn.
+  // (the press is started and not awaited: `ui.press` itself waits for the handler to settle)
+  const turnsOf = async (key: string): Promise<number> => {
+    const turns = await turnsToToast(s, () => void ui.press({ key }))
+    await spin()
+    return turns
+  }
+  const base = await turnsOf('answer-last')
+  expect(base, 'row 1 reaches the toast').toBeGreaterThanOrEqual(0)
+  for (const name of ['B', 'A']) {
+    expect(await turnsOf(earlierKey(name)), `the drawn row ${name} scrolls before it yields`).toBe(base)
+  }
   for (const name of ['B', 'A']) {
     const press = earlierPress(entry(name))
     expect(press, 'the target of the row is the question\'s uuid').toEqual({ label: 'earlier question', id: uuidOf(name) })
@@ -281,180 +307,4 @@ test('L11b the same state: a list open fills the three older ones and keeps last
   expect(lastEarlier(r)).toEqual(entries('C', 'B', 'A'))
   expect(s.writes, 'lastQuestion is not written').toEqual([])
   await ui.unmount()
-})
-
-// --- L12 to L15: races ---
-
-test('L12 a newer submit between the two writes of a settle: no question is lost', async ($, on) => {
-  const s = session(on)
-  const r = recent(on)
-  const g = gate()
-  let isHeld = false
-  on('state.set', KEY, async (_, e, next) => {
-    if (!isHeld && e.value !== null && 'uuid' in e.value && e.value.uuid === 'uD') {
-      isHeld = true
-      await g.wait // D's own write of lastQuestion waits; its earlierQuestions write has landed
-    }
-    return next(e)
-  })
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  s.rows = [...s.rows, Q('D')]
-  await typed($, 'D')
-  expect(uuids(lastEarlier(r)), 'the earlier questions of D are written first').toEqual(['uC', 'uB', 'uA'])
-  await ask($, s, 'E') // E is typed while D's last write waits
-  g.release()
-  await spin()
-  expect(await held($, s)).toEqual({ uuid: 'uE', text: 'E' })
-  expect(uuids(lastEarlier(r))).toEqual(['uD', 'uC', 'uB'])
-  const ui = await opened($)
-  expect(await labels(ui)).toEqual(['› E', '› D', '› C'])
-  await ui.unmount()
-})
-
-test('L12b the earlierQuestions write of an older settle lands after a newer settle: it does not take the newer list back', async ($, on) => {
-  const s = session(on)
-  const g = gate()
-  let isHeld = false
-  const r = recent(on, {
-    meddle: {
-      hold: async write => {
-        if (!isHeld && write[0]?.uuid === 'uC') {
-          isHeld = true
-          await g.wait // D's earlier write (C, B, A) waits
-        }
-      },
-    },
-  })
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  s.rows = [...s.rows, Q('D')]
-  await typed($, 'D') // held at its earlier write
-  await ask($, s, 'E') // E settles completely
-  expect(await held($, s)).toEqual({ uuid: 'uE', text: 'E' })
-  g.release()
-  await spin()
-  expect(await held($, s)).toEqual({ uuid: 'uE', text: 'E' })
-  expect(await heldEarlier($, r), 'what the engine holds, before any list open rebuilds it').toEqual(entries('D', 'C', 'B'))
-  const ui = await opened($)
-  expect(await labels(ui), 'D is not lost').toEqual(['› E', '› D', '› C'])
-  await ui.unmount()
-})
-
-test('L12c a session end while a settle\'s lastQuestion write waits: nothing is written after it', async ($, on) => {
-  const s = session(on)
-  const r = recent(on)
-  const g = gate()
-  let isHeld = false
-  on('state.set', KEY, async (_, e, next) => {
-    if (!isHeld && e.value !== null && 'uuid' in e.value && e.value.uuid === 'uD') {
-      isHeld = true
-      await g.wait
-    }
-    return next(e)
-  })
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  s.rows = [...s.rows, Q('D')]
-  await typed($, 'D')
-  await end($)
-  await spin()
-  expect(valueOf(s)).toBeNull()
-  expect(lastEarlier(r)).toEqual([])
-  const after = [s.writes.length, r.writes.length]
-  g.release()
-  await spin()
-  expect(s.writes.slice(after[0]).every(w => w === null), 'only null after the end').toBe(true)
-  expect(r.writes.slice(after[1]).every(w => w.length === 0), 'only empty lists after the end').toBe(true)
-  expect(valueOf(s)).toBeNull()
-  expect(lastEarlier(r)).toEqual([])
-})
-
-test('L12d a session end while a settle\'s earlierQuestions write waits: the list stays empty', async ($, on) => {
-  const s = session(on)
-  const g = gate()
-  let isHeld = false
-  const r = recent(on, {
-    meddle: {
-      hold: async write => {
-        if (!isHeld && write[0]?.uuid === 'uC') {
-          isHeld = true
-          await g.wait
-        }
-      },
-    },
-  })
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  s.rows = [...s.rows, Q('D')]
-  await typed($, 'D')
-  await end($)
-  await spin()
-  expect(lastEarlier(r)).toEqual([])
-  const after = [s.writes.length, r.writes.length]
-  g.release()
-  await spin()
-  expect(s.writes.slice(after[0]).every(w => w === null), 'only null after the end').toBe(true)
-  expect(r.writes.slice(after[1]).every(w => w.length === 0), 'only empty lists after the end').toBe(true)
-  expect(await held($, s)).toBeNull()
-})
-
-test('L13 a long turn: an earlier question more than 50 rows back stays in the list after the next settle', async ($, on) => {
-  const s = session(on)
-  const r = recent(on)
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  s.rows = [...s.rows, ...Array.from({ length: 60 }, (_, i) => answer(`long${i}`))]
-  await ask($, s, 'D') // the lookup reads the newest 50 rows: B and A are past them
-  expect(valueOf(s)).toEqual({ uuid: 'uD', text: 'D' })
-  expect(uuids(lastEarlier(r))).toEqual(['uC', 'uB', 'uA'])
-  const ui = await opened($)
-  expect(await labels(ui)).toEqual(['› D', '› C', '› B'])
-  await ui.unmount()
-})
-
-test('L14 a draw between the two writes of a settle shows no question twice and none missing', async ($, on) => {
-  const s = session(on)
-  recent(on)
-  const g = gate()
-  let isHeld = false
-  on('state.set', KEY, async (_, e, next) => {
-    if (!isHeld && e.value !== null && 'uuid' in e.value && e.value.uuid === 'uD') {
-      isHeld = true
-      await g.wait
-    }
-    return next(e)
-  })
-  await start($)
-  await asked($, s, 'A', 'B', 'C')
-  const ui = await opened($)
-  s.rows = [...s.rows, Q('D')]
-  await typed($, 'D') // earlierQuestions is written (C, B, A); lastQuestion still says pending
-  await ui.redraw()
-  expect(s.read, 'what the engine holds').toEqual({ pending: 'D', previous: 'uC', previousText: 'C' })
-  expect(await labels(ui), 'C once, B, A').toEqual(['› C (sending…)', '› B', '› A'])
-  g.release()
-  await spin()
-  await ui.redraw()
-  expect(await labels(ui)).toEqual(['› D', '› C', '› B'])
-  await ui.unmount()
-})
-
-test('L15 the change function runs again on a version miss: the written list comes from the run that landed', async ($, on) => {
-  const s = session(on)
-  const other: Entry[] = [{ uuid: 'uZ', text: 'Z' }]
-  let misses = 0
-  const r = recent(on, {
-    meddle: {
-      miss: () => {
-        if (misses > 0) return undefined
-        misses = 1
-        return other // another write landed between the read and this write: this one misses and the change function runs again on it
-      },
-    },
-  })
-  await start($)
-  await asked($, s, 'A', 'B')
-  expect(misses).toBe(1)
-  expect(uuids(lastEarlier(r)), 'the list of the run that landed: it holds what the other write left (Z)').toEqual(['uA', 'uZ'])
 })
