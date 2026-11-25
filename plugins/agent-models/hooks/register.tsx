@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Account, AgentRow, LastQuestion, LimitsView, Login, Pin, Tasks, Viewer } from '../types'
+import type { Account, AgentRow, EarlierQuestion, LastQuestion, LimitsView, Login, Pin, Tasks, Viewer } from '../types'
 import {
   accountLabel, ACTIVE, BUTTON_COLOR, capNote, clampIndex, CLOSE_COLOR, closeViewer, currentAccount, currentPrompts, currentViewer,
   isAccountFresh, isAccountReading, isLoginPending, LOG_NOTE, LOGIN_CEILING_MS, LOGIN_COLOR, movePage, nowOrZero, openViewer, readAccount,
@@ -10,7 +10,7 @@ import {
 import { accountButton, currentLimits, emailOf, isLimitsShown, limitsClock, limitsRow, limitsText, tickLimits, watchLimitsMinute } from './limits'
 import { closeTasks, currentTasks, tasksButton, tasksLabel, tasksView } from './tasks'
 import {
-  accountRowCells, answerButton, answerList, clearAnswerList, clearQuestion, closeAnswerList, currentAnswerListOpen, currentLastQuestion, isAnswerShown,
+  accountRowCells, answerButton, answerList, clearAnswerList, clearQuestion, closeAnswerList, currentAnswerListOpen, currentEarlierQuestions, currentLastQuestion, isAnswerShown,
   noteSubmit, restoreQuestion, retryPending,
 } from './answer'
 import { clearPins, currentPins, pinnedRow } from './pins'
@@ -205,6 +205,7 @@ type Page = {
   limits: LimitsView
   limitsNow: number | null // the draw's clock read for the open limits line; null when none was asked or it was refused
   question: LastQuestion // what the last answer list's first row scrolls to
+  earlier: readonly EarlierQuestion[] // the questions before it: the rows after the first
   pins: readonly Pin[] // the rows after it
   isAnswerListOpen: boolean
   hasAnswerButton: boolean // false on the terminal's main screen, where no transcript scroll works
@@ -266,7 +267,7 @@ const accountRow = ($: EngineInterface, e: RenderEvent, page: Page, lead?: Retur
       {limitsRow($, e, page.limits, emailOf(page.account), page.limitsNow)}
       {page.login.reason !== undefined && <Text dimColor>{refusalNote(page.login.reason)}</Text>}
       {page.tasks.isOpen && !page.view.isOpen ? tasksView($, e, page.tasks) : null}
-      {page.hasAnswerButton && page.isAnswerListOpen && !page.view.isOpen ? answerList($, e, page.question, page.pins) : null}
+      {page.hasAnswerButton && page.isAnswerListOpen && !page.view.isOpen ? answerList($, e, page.question, page.earlier, page.pins) : null}
     </Box>
   )
 }
@@ -372,7 +373,7 @@ export const register: Register = on => {
       return next(e)
     }
     const below = await next(e) // the rest of the chain draws under our band, never instead of it
-    const [list, view, acc, state, taskList, limitsView, question, pinList, isAnswerListOpen, wake] = await Promise.all([
+    const [list, view, acc, state, taskList, limitsView, question, earlier, pinList, isAnswerListOpen, wake] = await Promise.all([
       read($, rows),
       currentViewer($),
       currentAccount($),
@@ -380,6 +381,7 @@ export const register: Register = on => {
       currentTasks($),
       currentLimits($),
       currentLastQuestion($),
+      currentEarlierQuestions($),
       currentPins($),
       currentAnswerListOpen($),
       currentWake($),
@@ -405,6 +407,7 @@ export const register: Register = on => {
       limits: limitsView,
       limitsNow,
       question,
+      earlier,
       pins: pinList,
       isAnswerListOpen,
       hasAnswerButton: isAnswerShown(e.viewport),

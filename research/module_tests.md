@@ -9,7 +9,7 @@ empty `HOME` and no `ANTHROPIC_*` variable (`env -i`).
 | Mod | `claude plugin test plugins/agent-models`, with the pinned CLI that `node tools/claude-bin.mjs` finds | the mod's own cases, in `plugins/agent-models/tests/`, run by the engine | job `mods · plugin` |
 
 At this writing: 153 tools tests (agent-models-extract 18, copy-proof 17, type-baseline 11, claude-bin 6, ci-shape 7, promote-release 45 in three files
-(argument, ancestry, ci and push 23; parsers and the pager 8; G1-G8 and the dry run 14), mods-gate 8, repo-settings 27, workflows 14) and 391 mod cases in 16 test files. The commands print the current numbers; do not trust this line over them.
+(argument, ancestry, ci and push 23; parsers and the pager 8; G1-G8 and the dry run 14), mods-gate 8, repo-settings 27, workflows 14) and 441 mod cases in 19 test files. The commands print the current numbers; do not trust this line over them.
 
 ## Tools tests (`npm test`)
 
@@ -42,10 +42,16 @@ The release tests use an `update` hook on the bare remote for the refused tag, b
 
 ## Mod cases (`claude plugin test`)
 
-The 391 cases are the mod's own, copied byte for byte with the mod; they cover the band of subagent rows, the account
-and limits line (with its ceilings, retries, 5-hour and weekly reset times), tasks, messages, answer pins and the
-answer list, and the races between them. This repository adds no case and may not edit one: a change under
-`plugins/agent-models/` needs a higher `plugin.json` version.
+The 441 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
+and limits line (with its ceilings, retries, 5-hour and weekly reset times), tasks, messages, answer pins, the answer
+list, the wake and the recent questions, and the races between them. The first 391 were copied byte for byte with the mod.
+Since 1.7.0 the mod is developed in this repository, so cases are added with each version. A change under
+`plugins/agent-models/` still needs a higher `plugin.json` version.
+
+Two flows were added here. The 1.7.0 wake: W1-W14, in `tests/wake.test.tsx` (its helpers are in `tests/wake-fixtures.tsx`).
+The 1.8.0 recent questions in the `last answer` list: L1-L15 with their sub-cases (L4b, L6b-d, L7b, L8b, L11b, L12b-d), in
+`tests/answer-recent.test.tsx` (the list, the rebuilds, the session start and end) and `tests/answer-recent-races.test.tsx`
+(L12-L15, the races of the two writes of a settle); their helpers are in `tests/answer-recent-fixtures.tsx`.
 
 Known flake, R4: `tests/account-retry.test.tsx`, "R4 a timer a draw started was refused…", fails about one run in
 eight, in the 1.5.0 build too. A red run is a red run and is not re-run to get green. It is traced to the shared state

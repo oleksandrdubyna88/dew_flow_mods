@@ -1,33 +1,52 @@
 // The `last answer` button (1.5.0) and its list (1.6.0): the button opens a list under the account row whose first row brings the
-// owner's last question to the top of the transcript window, so the answer starts right under it, and whose other rows are the pins
-// (hooks/pins.tsx). The target is the question's transcript uuid, kept in `$.state` at the person's submit: the press must call
+// owner's last question to the top of the transcript window, so the answer starts right under it. Since 1.8.0 two more rows bring the
+// two questions before it, then a separator (only with pins) and the pins (hooks/pins.tsx). The target is the question's transcript
+// uuid, kept in `$.state` at the person's submit (the questions before the last one in `earlierQuestions`): the press must call
 // `$.ui.scroll` at once (an `await` before it makes the engine refuse the scroll, measured 2026-11-22), and after a hot reload the
 // rows drawn earlier are not drawn again, so no list of drawn rows could be searched. Every function that takes `$` is a function
 // declaration (an arrow taking `$` is refused across an import). Nothing here throws out of a hook.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PromptSubmitInput, PromptSubmitResult, SessionMessage, UiScrollArgs, UiScrollResult } from 'claude-code'
 
-import type { LastQuestion, Pin } from '../types'
-import { BUTTON_COLOR, CLOSE_COLOR, cleanPrompts, ENTRY_CAP } from './prompts'
+import type { EarlierQuestion, LastQuestion, Pin } from '../types'
+import { BUTTON_COLOR, CLOSE_COLOR, ENTRY_CAP } from './prompts'
 import type { ScrollPress } from './pins'
-import { cutText, PIN_COLOR, PIN_ICON, pinPress, runPress, unpin } from './pins'
+import { PIN_COLOR, PIN_ICON, pinPress, runPress, unpin } from './pins'
+import { earlierFrom, EARLIER_MAX, findQuestion, newestQuestions, questionText } from './questions'
+
+export { findQuestion, newestQuestion, questionText, SUMMARY_PREFIX } from './questions'
 
 export const ANSWER_LABEL = 'last answer'
 export const ANSWER_KEY = 'last-answer'
 export const LIST_ROW_KEY = 'answer-last' // the list's first row
 export const NO_QUESTION_ROW = '› no question yet'
 export const OLD_QUESTION = 'last question' // the first row of a question stored by 1.5.0, which kept no text
+export const EARLIER_ROW_KEY = 'answer-earlier-' // plus the uuid: the list's second and third rows
+export const SEPARATOR_KEY = 'answer-separator'
+export const SEPARATOR = '────────' // 8 cells: between the questions and the pins
+const EARLIER_SHOWN = 2 // rows after the first one
 export const LOOKUP_ROWS = 50 // a submit's lookup: the question is among the newest rows (it was just typed)
 export const RESTORE_ROWS = 200 // a session start's lookup reads this many rows first, the engine cap only when none is a question
-export const SUMMARY_PREFIX = 'This session is being continued from a previous conversation'
 const PERSON_ORIGINS: ReadonlySet<string> = new Set(['composer', 'bridge'])
 const BUTTON_FRAME = 4 // `[ ` and ` ]` around a Button's label
 const GAP = 2
-const PEER_WRAPPER = /^<(?:teammate-message|agent-message)[\s>]/ // another agent's words: `cleanPrompts` drops only the engine's own tags
 
 // The engine's scan reads `read($, x)` only for an atom written in the same file: register.tsx reads this one through here.
 const lastQuestion = atom({ plugin: 'agent-models', key: 'lastQuestion' } as const, null as LastQuestion)
+const earlierQuestions = atom({ plugin: 'agent-models', key: 'earlierQuestions' } as const, [] as readonly EarlierQuestion[])
 const answerListOpen = atom({ plugin: 'agent-models', key: 'answerListOpen' } as const, false)
+
+const isEntry = (v: unknown): v is EarlierQuestion => typeof v === 'object' && v !== null && 'uuid' in v && typeof v.uuid === 'string' && 'text' in v && typeof v.text === 'string'
+const listOf = (value: unknown): readonly EarlierQuestion[] => (Array.isArray(value) ? value.filter(isEntry) : []) // a state stored before 1.8.0 has none
+
+/** The questions before the last one, newest first; none when the read is refused (the list then draws its first row only). */
+export async function currentEarlierQuestions($: EngineInterface): Promise<readonly EarlierQuestion[]> {
+  try {
+    return listOf(await read($, earlierQuestions))
+  } catch {
+    return []
+  }
+}
 
 export async function currentLastQuestion($: EngineInterface): Promise<LastQuestion> {
   return (await read($, lastQuestion)) ?? null // a state stored before 1.5.0 has none
@@ -37,49 +56,7 @@ export async function currentAnswerListOpen($: EngineInterface): Promise<boolean
   return (await read($, answerListOpen)) === true // a state stored before 1.6.0 has none: closed
 }
 
-// --- pure ---
-
-const isQuestionRow = (m: SessionMessage): m is SessionMessage & { uuid: string } =>
-  m.role === 'user' && (m.toolResults?.length ?? 0) === 0 && typeof m.uuid === 'string'
-
-/**
- * The uuid of the NEWEST user row whose clean text is `text`, among the rows newer than the row `notBefore` (that row and the older
- * ones are an earlier question: the same words asked again are not found until they are in the transcript). Rows are scanned newest
- * first and the scan stops at `notBefore`; with no boundary the whole window is scanned. Undefined while there is none.
- */
-export function findQuestion(rows: readonly SessionMessage[], text: string, notBefore?: string): string | undefined {
-  const wanted = cleanPrompts([text])[0] // both sides are compared clean; a text that is empty when clean matches nothing
-  if (wanted === undefined) return undefined
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const row = rows[i]
-    if (row === undefined) continue
-    if (notBefore !== undefined && row.uuid === notBefore) return undefined
-    if (isQuestionRow(row) && cleanPrompts([row.text])[0] === wanted) return row.uuid
-  }
-  return undefined
-}
-
-// The first row's text: the first line of the clean question, spaces collapsed, cut. The owner's own marks stay (it is no markdown block).
-const firstLine = (clean: string): string => cutText((clean.split('\n').find(line => line.trim() !== '') ?? '').replace(/\s+/g, ' ').trim())
-
-/** The text the list shows for a question the person typed; undefined when it is empty once clean. */
-export function questionText(raw: string): string | undefined {
-  const clean = cleanPrompts([raw])[0]
-  return clean === undefined ? undefined : firstLine(clean)
-}
-
-const textPart = (text: string | undefined): { text?: string } => (text === undefined ? {} : { text })
-
-/** The newest row the person typed (its uuid and clean first line): not a tool result, a compaction summary or a notification or peer wrapper (a tag the person typed is fine). */
-export function newestQuestion(rows: readonly SessionMessage[]): { uuid: string; text: string } | undefined {
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const row = rows[i]
-    if (row === undefined || !isQuestionRow(row)) continue
-    const clean = cleanPrompts([row.text])[0]
-    if (clean !== undefined && !clean.startsWith(SUMMARY_PREFIX) && !PEER_WRAPPER.test(row.text.trimStart())) return { uuid: row.uuid, text: firstLine(clean) }
-  }
-  return undefined
-}
+// --- pure (the questions of a transcript: hooks/questions.ts) ---
 
 /** Whether the button is drawn: not on the terminal's main screen, where the transcript is its own scrollback and no scroll works. */
 export const isAnswerShown = (viewport: { isFullscreen?: boolean } | undefined): boolean => viewport?.isFullscreen !== false
@@ -118,6 +95,9 @@ export function firstRowPress(question: Exclude<LastQuestion, null>): ScrollPres
   return id === undefined ? undefined : { label: 'last answer', id }
 }
 
+/** The press on the list's second or third row: the question's uuid, never its text. */
+export const earlierPress = (question: EarlierQuestion): ScrollPress => ({ label: 'earlier question', id: question.uuid })
+
 /** What the first row says: the settled question's text; a pending one's press goes to the question before it, so it says that one's text and that the new one is on its way. */
 export function questionRowText(question: Exclude<LastQuestion, null>): string {
   if ('uuid' in question) return question.text ?? OLD_QUESTION
@@ -132,6 +112,7 @@ export async function toggleAnswerList($: EngineInterface, closeOthers: () => Pr
     const isOpen = await read($, answerListOpen)
     if (!isOpen) await closeOthers().catch(() => undefined)
     await update($, answerListOpen, cur => !cur)
+    if (!isOpen) await refreshEarlier($) // the list is open: what a session from 1.7.0 or a reload did not fill is read from the transcript now
   } catch {
     // a refused read or write: the list stays as it was; the next press tries again
   }
@@ -183,8 +164,26 @@ function pinRow($: EngineInterface, e: RenderEvent, pin: Pin) {
   )
 }
 
-/** The open list: the last question first, then the pins oldest first (the band scrolls a list taller than its room). */
-export function answerList($: EngineInterface, e: RenderEvent, question: LastQuestion, pins: readonly Pin[]) {
+function earlierRow($: EngineInterface, e: RenderEvent, question: EarlierQuestion) {
+  const { Button, Text } = $.ui.resolve(e)
+  return (
+    <Button key={`${EARLIER_ROW_KEY}${question.uuid}`} label={`› ${question.text}`} onPress={() => void runPress(args => $.ui.scroll(args), text => $.ui.toast(text), earlierPress(question))}>
+      <Text color={BUTTON_COLOR}>{`› ${question.text}`}</Text>
+    </Button>
+  )
+}
+
+/** The questions the list draws after its first row: `earlier` without the one the first row presses (a pending question's row goes to the one before it), the first two. */
+export function earlierShown(question: LastQuestion, earlier: readonly EarlierQuestion[]): EarlierQuestion[] {
+  const first = question === null ? undefined : firstRowPress(question)?.id
+  return question === null ? [] : earlier.filter(q => q.uuid !== first).slice(0, EARLIER_SHOWN)
+}
+
+/**
+ * The open list: the last question first, then the two before it (newest first), then (only with pins) a separator and the pins
+ * oldest first (the band scrolls a list taller than its room).
+ */
+export function answerList($: EngineInterface, e: RenderEvent, question: LastQuestion, earlier: readonly EarlierQuestion[], pins: readonly Pin[]) {
   const { Box, Button, Text } = $.ui.resolve(e)
   return (
     <Box flexDirection="column">
@@ -195,6 +194,8 @@ export function answerList($: EngineInterface, e: RenderEvent, question: LastQue
           <Text color={BUTTON_COLOR}>{`› ${questionRowText(question)}`}</Text>
         </Button>
       )}
+      {earlierShown(question, earlier).map(q => earlierRow($, e, q))}
+      {pins.length > 0 ? <Box key={SEPARATOR_KEY}><Text dimColor>{SEPARATOR}</Text></Box> : null}
       {pins.map(pin => pinRow($, e, pin))}
     </Box>
   )
@@ -203,6 +204,7 @@ export function answerList($: EngineInterface, e: RenderEvent, question: LastQue
 // --- knowing the question before any press ---
 
 let generation = 0 // the newest person's submit (or session end) this module saw: older work stops being the value's writer
+let endEpoch = 0 // the session ends this module saw: work that began before one stops writing `earlierQuestions` (as pins.tsx's `generation`)
 
 async function recentRows($: EngineInterface, last: number): Promise<readonly SessionMessage[]> {
   const rows = await $.session.messages({ last })
@@ -217,11 +219,35 @@ const previousOf = (cur: LastQuestion): { previous?: string; previousText?: stri
   return { previous: cur.previous, ...(cur.previousText === undefined ? {} : { previousText: cur.previousText }) }
 }
 
-type Pending = { pending: string; previous?: string }
+const textPart = (text: string | undefined): { text?: string } => (text === undefined ? {} : { text })
+
+type Pending = { pending: string; previous?: string; previousText?: string }
+
+/** The uuid the list's first row presses (the last question, or the one before a pending question): the row the earlier questions are older than. */
+const anchorOf = (cur: LastQuestion): string | undefined => (cur === null ? undefined : firstRowPress(cur)?.id)
+
+const sameList = (a: readonly EarlierQuestion[], b: readonly EarlierQuestion[]): boolean =>
+  a.length === b.length && a.every((q, i) => q.uuid === b[i]?.uuid && q.text === b[i]?.text)
+
+// `next` makes the new list from the one that stands, INSIDE the change function: `update` runs it again on a version miss, and the list
+// written is the one of the run that landed. A run after a session end returns the list as it is. A list that already holds `anchor` was
+// written by a newer settle (a list never holds the question it is older than): an older settle that lands late leaves it alone.
+async function writeEarlier($: EngineInterface, epoch: number, anchor: string | undefined, next: (cur: readonly EarlierQuestion[]) => readonly EarlierQuestion[]): Promise<void> {
+  await update($, earlierQuestions, raw => {
+    const cur = listOf(raw)
+    if (epoch !== endEpoch || (anchor !== undefined && cur.some(q => q.uuid === anchor))) return cur
+    return next(cur)
+  })
+}
 
 // The pending question becomes its uuid, only while it is still that pending question (same text, same `previous`; a stored `queued`
 // of a 1.5.0 candidate is ignored) and `mine` is still the newest generation (a session end or a newer submit owns the value).
-async function settle($: EngineInterface, pending: Pending, uuid: string, mine: number): Promise<void> {
+// `earlierQuestions` is written FIRST, from the rows the lookup read plus what is kept (the question before it, the old list): the
+// list draws every row but the one the first row presses, so every state between the two writes draws right. It does not wait for
+// `mine`: a newer settle recomputes it from its own rows and what stands. The session-end epoch stops it after a session end.
+async function settle($: EngineInterface, pending: Pending, uuid: string, mine: number, epoch: number, rows: readonly SessionMessage[]): Promise<void> {
+  const before: EarlierQuestion[] = pending.previous === undefined ? [] : [{ uuid: pending.previous, text: pending.previousText ?? OLD_QUESTION }]
+  await writeEarlier($, epoch, uuid, cur => earlierFrom(rows, uuid, [...before, ...cur]))
   await update($, lastQuestion, cur => (
     mine === generation && cur !== null && 'pending' in cur && cur.pending === pending.pending && cur.previous === pending.previous ? { uuid, ...textPart(questionText(pending.pending)) } : cur
   ))
@@ -240,10 +266,12 @@ export async function noteSubmit($: EngineInterface, e: PromptSubmitInput, resul
     if (result.drop !== undefined || e.command !== undefined || e.isMeta === true || !PERSON_ORIGINS.has(e.origin.kind)) return
     const entered = result.text
     const mine = (generation += 1)
+    const epoch = endEpoch
     const written = await update($, lastQuestion, cur => (mine === generation ? { pending: entered, ...previousOf(cur) } : cur))
     if (mine !== generation || written === null || !('pending' in written)) return // a newer submit (or a session end) owns the value
-    const uuid = findQuestion(await recentRows($, LOOKUP_ROWS), entered, written.previous)
-    if (uuid !== undefined && mine === generation) await settle($, written, uuid, mine)
+    const rows = await recentRows($, LOOKUP_ROWS)
+    const uuid = findQuestion(rows, entered, written.previous)
+    if (uuid !== undefined && mine === generation) await settle($, written, uuid, mine, epoch, rows)
   } catch {
     // a refused read or write: the value stays as it was; the next submit or turn tries again
   }
@@ -257,43 +285,95 @@ export async function noteSubmit($: EngineInterface, e: PromptSubmitInput, resul
  */
 export async function retryPending($: EngineInterface, isDeep: boolean): Promise<void> {
   const mine = generation // a session end (or a newer submit) during the reads below owns the value
+  const epoch = endEpoch
   try {
     const cur = await read($, lastQuestion)
     if (cur === null || !('pending' in cur)) return
-    const recent = await recentRows($, LOOKUP_ROWS)
-    let uuid = findQuestion(recent, cur.pending, cur.previous)
+    let rows = await recentRows($, LOOKUP_ROWS)
+    let uuid = findQuestion(rows, cur.pending, cur.previous)
     // a longer read only when the newest rows may hide the question: they do not reach back to `previous`
-    const reachesPrevious = cur.previous !== undefined && recent.some(row => row.uuid === cur.previous)
-    if (uuid === undefined && isDeep && recent.length >= LOOKUP_ROWS && !reachesPrevious) uuid = findQuestion(await recentRows($, ENTRY_CAP), cur.pending, cur.previous)
-    if (uuid !== undefined && mine === generation) await settle($, cur, uuid, mine)
+    const reachesPrevious = cur.previous !== undefined && rows.some(row => row.uuid === cur.previous)
+    if (uuid === undefined && isDeep && rows.length >= LOOKUP_ROWS && !reachesPrevious) {
+      rows = await recentRows($, ENTRY_CAP)
+      uuid = findQuestion(rows, cur.pending, cur.previous)
+    }
+    if (uuid !== undefined && mine === generation) await settle($, cur, uuid, mine, epoch, rows)
   } catch {
     // the next turn tries again
   }
 }
 
-/** At a session start with no value (a resume, or a session from before 1.5.0): the newest question of the transcript. Never rejects. */
+/**
+ * At a session start. With no value (a resume, or a session from before 1.5.0): the newest four questions of the transcript, the three
+ * older ones written first, then the newest. With a value and no `earlierQuestions` (a session from 1.7.0): only the list is filled from
+ * the questions older than the first row's. Never rejects.
+ */
 export async function restoreQuestion($: EngineInterface): Promise<void> {
   const mine = generation // a session end (or a submit) during the reads below owns the value
   try {
-    if ((await read($, lastQuestion)) !== null) return // a reload keeps the session: the value stays
+    const cur = await read($, lastQuestion)
+    if (cur !== null) return await fillEarlier($, cur, mine) // a reload keeps the session: the value stays
+    const wanted = EARLIER_MAX + 1
     const recent = await recentRows($, RESTORE_ROWS)
-    let found = newestQuestion(recent)
-    if (found === undefined && recent.length >= RESTORE_ROWS) found = newestQuestion(await recentRows($, ENTRY_CAP))
-    if (found !== undefined) {
-      const restored = found
-      await update($, lastQuestion, cur => (cur === null && mine === generation ? restored : cur))
-    }
+    let found = newestQuestions(recent, wanted)
+    if (found.length < wanted && recent.length >= RESTORE_ROWS) found = newestQuestions(await recentRows($, ENTRY_CAP), wanted)
+    const [newest, ...rest] = found
+    if (newest === undefined) return
+    if (rest.length > 0) await update($, earlierQuestions, raw => (mine === generation ? rest : listOf(raw)))
+    const restored = { uuid: newest.uuid, text: newest.text }
+    await update($, lastQuestion, raw => (raw === null && mine === generation ? restored : raw))
   } catch {
     // the transcript is not readable yet; the first submit sets the value
   }
 }
 
-/** At a session end (a `/clear` raises no `session.start`): the value is cleared, and work still in flight stops writing. Never rejects. */
-export async function clearQuestion($: EngineInterface): Promise<void> {
-  generation += 1
+// A value stored by 1.7.0 and no list: the questions older than the first row's are read (the engine cap when the newest rows hold fewer than the list keeps).
+async function fillEarlier($: EngineInterface, cur: Exclude<LastQuestion, null>, mine: number): Promise<void> {
+  const anchor = anchorOf(cur)
+  if (anchor === undefined || listOf(await read($, earlierQuestions)).length > 0) return
+  let rows = await recentRows($, RESTORE_ROWS)
+  let list = earlierFrom(rows, anchor, [])
+  if (list.length < EARLIER_MAX && rows.length >= RESTORE_ROWS) {
+    rows = await recentRows($, ENTRY_CAP)
+    list = earlierFrom(rows, anchor, [])
+  }
+  if (list.length > 0) await update($, earlierQuestions, raw => (mine === generation && listOf(raw).length === 0 ? list : listOf(raw)))
+}
+
+/**
+ * When the list opens: `earlierQuestions` is made again from the newest rows and what stands (a session from 1.7.0 or a reload may hold
+ * none; nothing the read cannot see is dropped). A write only when the list changes. Repeats when the first row's question changed
+ * during it (a settle landed), at most three times. Never rejects.
+ */
+async function refreshEarlier($: EngineInterface): Promise<void> {
+  const epoch = endEpoch
   try {
-    await update($, lastQuestion, () => null)
+    for (let round = 0; round < 3; round += 1) {
+      const anchor = anchorOf(await read($, lastQuestion))
+      if (anchor === undefined) return
+      const rows = await recentRows($, LOOKUP_ROWS)
+      const old = listOf(await read($, earlierQuestions))
+      if (old.some(q => q.uuid === anchor)) return // a settle is between its two writes: it owns the list
+      const next = earlierFrom(rows, anchor, old)
+      if (!sameList(old, next)) await writeEarlier($, epoch, anchor, cur => earlierFrom(rows, anchor, cur))
+      if (anchorOf(await read($, lastQuestion)) === anchor) return
+    }
+  } catch {
+    // the list stays as it was; the next open tries again
+  }
+}
+
+async function swallow(write: Promise<unknown>): Promise<void> {
+  try {
+    await write
   } catch {
     // a refused write: the next session's first submit replaces the value
   }
+}
+
+/** At a session end (a `/clear` raises no `session.start`): both values are cleared, and work still in flight stops writing. Never rejects. */
+export async function clearQuestion($: EngineInterface): Promise<void> {
+  generation += 1
+  endEpoch += 1
+  await Promise.all([swallow(update($, earlierQuestions, () => [])), swallow(update($, lastQuestion, () => null))])
 }
