@@ -11,9 +11,16 @@ claude plugin install agent-models@dew-flow-mods
 
 ## agent-models
 
-The mod in `plugins/agent-models` is the folder `mods/agent-models` of
-[dew_flow_conventions](https://github.com/oleksandrdubyna88/dew_flow_conventions) at commit `69adc1e`
-(version 1.6.0), copied byte for byte. `node tools/copy-proof.mjs` proves the copy.
+A row above the prompt: each running subagent with its model, the signed-in account with its limits (the 5-hour and the
+weekly reset times), a login button, the session's tasks list, a pin under each text answer of Claude, a `last answer`
+button whose list holds the last three questions (newest first) and then the pinned answers, and a `wake` button that
+sends `продолжай автономно` every 2 hours while the session is open.
+
+The mod came from the folder `mods/agent-models` of
+[dew_flow_conventions](https://github.com/oleksandrdubyna88/dew_flow_conventions) at commit `69adc1e` (version 1.6.0),
+copied byte for byte; `node tools/copy-proof.mjs` proves that start against the tag `agent-models--v1.6.0`. It is
+developed here since then: 1.6.1, 1.7.0 (the wake button, [research/PLAN_agent_models_1_7_0.md](research/PLAN_agent_models_1_7_0.md))
+and 1.8.0 (the last three questions, [research/PLAN_agent_models_1_8_0.md](research/PLAN_agent_models_1_8_0.md)).
 
 Licence: MIT, see [LICENSE](LICENSE).
 

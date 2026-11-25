@@ -1,8 +1,14 @@
 # PLAN — agent-models mod 1.8.0: the `last answer` list shows the last three questions, then a separator, then the pins
 
-> Status: **APPROVED 2026-11-25 (epoch 1, by reviewers: coai `proceed` and the Opus plan review); build next.** Scope: `plugins/agent-models/` (the list under the `last answer` button,
-> one state value, version 1.8.0, the mod's own tests), `todo/README.md`. The release goes the normal way of this repository
-> (the promotion with the owner's approval click; installs update by themselves). Parent: the mod at `9b48665` (1.7.0).
+> Status: **IMPLEMENTED, 2026-11-25.** Released as 1.8.0 (PR #7, `34d8042`, tag `agent-models--v1.8.0`).
+> The owner, after the update reached the machine, 2026-11-25: "работает. супер." ("it works. great."); the owner checks
+> were not reported one by one.
+> Deviations: ledger 1.1 (a late settle whose anchor is already listed leaves the list alone; the restore also skips the
+> wake text). Pure helpers moved to the new `hooks/questions.ts`. Three findings accepted in the code round were NOT
+> built, as the plan's one change after approval was used: the 50-row read at list open after `/reload-plugins` from 1.7.0,
+> the wake text typed by the owner or stored by 1.7.0 as a question, and `findQuestion` after `/rewind`; they are
+> follow-ups in `todo/README.md`. Rejected in the code round: a per-feature module doc, arrow fixtures, a local
+> accumulator, a generation token for a settle held past four others.
 
 ## Goal (the owner's words, 2026-11-25, translated from Russian)
 

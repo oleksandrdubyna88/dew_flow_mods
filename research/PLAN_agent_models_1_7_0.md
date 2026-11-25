@@ -1,9 +1,14 @@
 # PLAN — agent-models mod 1.7.0: a `wake` button that wakes this session every 2 hours
 
-> Status: **APPROVED 2026-11-24 (epoch 1, by reviewers: the Opus plan review; the coai round skipped by the owner, 2026-11-24); build next.** Scope: `plugins/agent-models/` (a `wake` button in the account row, a new
-> `hooks/wake.tsx`, one state value, version 1.7.0, the mod's own tests), `todo/README.md`. The release goes the normal way of
-> this repository (the promotion with the owner's approval click; installs update by themselves). Parent: the mod as it is
-> at `97fc511` (1.6.1).
+> Status: **IMPLEMENTED, 2026-11-25.** Released as 1.7.0 on 2026-11-24 (PR #6, `9b48665`, tag `agent-models--v1.7.0`).
+> The owner, after the update reached the machine, 2026-11-25: "работает. супер." ("it works. great."). Owner checks 2 and 3
+> (a wake after 2 hours; a wake across the 5-hour limit) were not reported one by one.
+> Deviations: the coai plan round did not run (the owner: skip it); the plan was approved on the Opus review, whose finding
+> 10 removed the busy check (the engine holds a plugin prompt until the session is idle). Code round (ledger 1.1): a wake
+> marker counts as lost after 2 × 2 h, not 2 h (with 2 h it could never block, as the next claim is always 2 h later); the
+> tick guard counts 30 lost ticks, not 60 s (the test clock does not move `Date`); `minute` stores the minutes left.
+> W5 is three single-scope tests (the test engine has no state shared across module scopes). No `tsc` run: CI has none;
+> the type check is the engine's, in `validate --json`. R4 failed in 3 of about 6 local runs during the build.
 
 ## Goal (the owner's words, 2026-11-24, translated from Russian)
 

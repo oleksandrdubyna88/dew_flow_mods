@@ -8,5 +8,7 @@ What this repository is and how it works, once it exists as built. The design re
 | [architecture.md](architecture.md) | The marketplace, the `main` and `release` refs and the gate that moves `release`, how a machine gets the mod, the interaction with `dew_flow_conventions`, CI |
 | [module_marketplace.md](module_marketplace.md) | The catalog, the byte copy of the mod, the copy proof C1, the type baseline and the binary finder, the release gate (promote-release, mods-gate, the rulesets and settings as data) |
 | [module_tests.md](module_tests.md) | The two harnesses (`npm test` for the tools, `claude plugin test` for the mod), the flows each covers, where they run in CI, the known R4 flake |
+| [PLAN_agent_models_1_7_0.md](PLAN_agent_models_1_7_0.md) | IMPLEMENTED 2026-11-25: mod 1.7.0, the `wake` button that sends `продолжай автономно` every 2 hours (the claim, one wake in flight, the probe) |
+| [PLAN_agent_models_1_8_0.md](PLAN_agent_models_1_8_0.md) | IMPLEMENTED 2026-11-25: mod 1.8.0, the `last answer` list with the last three questions, a separator and the pins (the rebuild at settle, list open and session start) |
 
 Open work is in [todo](../todo/README.md).

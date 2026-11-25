@@ -9,8 +9,6 @@ this folder holds this repository's side of it.
 | Plan | Status | Scope |
 |---|---|---|
 | [PLAN_from_conventions.md](PLAN_from_conventions.md) | plan only (2026-11-23) | the stories this repository carries from the move: the copy and its proof (story 2.1), then the release gate and the first promotion (2.2, 2.3) |
-| [PLAN_agent_models_1_7_0.md](PLAN_agent_models_1_7_0.md) | released 2026-11-24 (#6, tag `agent-models--v1.7.0`); the owner checks open | mod 1.7.0: a `wake` button that sends `продолжай автономно` every 2 hours while the session is open (the owner, 2026-11-24) |
-| [PLAN_agent_models_1_8_0.md](PLAN_agent_models_1_8_0.md) | approved (2026-11-25), building | mod 1.8.0: the `last answer` list shows the last three questions, newest first, then a separator, then the pins (the owner, 2026-11-25) |
 
 ## Follow-ups (no plan yet)
 
