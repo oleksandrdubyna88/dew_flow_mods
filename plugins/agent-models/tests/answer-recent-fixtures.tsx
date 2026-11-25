@@ -39,23 +39,33 @@ export type Recent = {
 export const EARLIER_KEY = { plugin: 'agent-models', key: 'earlierQuestions' } as const
 
 /**
- * What a test does to a write of `earlierQuestions` before the engine takes it: `before` is awaited (a gate holds the write), and `put`
- * writes another value in at once, with no version condition (another writer got in between, so the held write then misses).
+ * What a test does to a write of `earlierQuestions` before the engine takes it. `hold` is awaited (a gate holds the write). `miss` may
+ * answer a list that another writer left in between: the write then misses (nothing is stored), the next read answers that list, and the
+ * mod's change function runs again on it.
  */
-export type Before = (write: readonly Entry[], put: (value: readonly Entry[]) => Promise<unknown>) => Promise<void> | void
+export type Meddle = {
+  hold?: (write: readonly Entry[]) => Promise<void> | void
+  miss?: (write: readonly Entry[]) => readonly Entry[] | undefined
+}
 
 /** Records every write and read of `earlierQuestions` (and the order of its writes among those of `lastQuestion`). */
-export const recent = (on: On, o: { seed?: readonly Entry[]; before?: Before } = {}): Recent => {
+export const recent = (on: On, o: { seed?: readonly Entry[]; meddle?: Meddle } = {}): Recent => {
   const r: Recent = { writes: [], log: [], read: [], seed: o.seed === undefined ? undefined : [...o.seed] }
   on('state.set', KEY, (_, e, next) => {
     r.log.push('lastQuestion')
     return next(e)
   })
   on('state.set', EARLIER_KEY, async (_, e, next) => {
+    const write = entriesOf(e.value)
     r.log.push('earlierQuestions')
-    r.writes.push(entriesOf(e.value))
+    r.writes.push(write)
+    await o.meddle?.hold?.(write)
+    const other = o.meddle?.miss?.(write)
+    if (other !== undefined) {
+      r.seed = [...other]
+      return { value: { isSet: false as const, version: 0 } }
+    }
     r.seed = undefined
-    await o.before?.(entriesOf(e.value), value => next({ ...e, value, ifVersion: undefined }))
     return next(e)
   })
   on('state.get', EARLIER_KEY, async (_, e, next) => {
@@ -75,6 +85,13 @@ export const ask = async ($: Engine, s: Session, name: string): Promise<void> =>
   s.rows = [...s.rows, Q(name)]
   await typed($, name)
   s.rows = [...s.rows, answer(`a${name}`)]
+}
+
+/** What the engine holds for `earlierQuestions` now: a draw of the band reads it (the list stays closed, so no open rebuilds it). */
+export const heldEarlier = async ($: Engine, r: Recent): Promise<Entry[]> => {
+  const ui = await bandOf($)
+  await ui.unmount()
+  return r.read
 }
 
 /** The band, with the `last answer` list opened by the button. */

@@ -89,6 +89,12 @@ export type Limits = {
 export type LastQuestion = { uuid: string; text?: string } | { pending: string; previous?: string; previousText?: string } | null
 
 /**
+ * A question before the last one (1.8.0), as the list shows it: `uuid` is the question's transcript row (what a scroll takes),
+ * `text` the clean first line of the question, cut to 60 characters.
+ */
+export type EarlierQuestion = { uuid: string; text: string }
+
+/**
  * A pin (1.6.0) on one of Claude's text answers: `id` is the `requestId` of the answer's block (one per block, stable while it
  * streams), what a transcript scroll takes; `text` the block's first content line, cut to 60 characters, what the list shows.
  */
@@ -122,6 +128,8 @@ declare module 'claude-code' {
       /** The clock minute (epoch ms / 60000, floored) of the open limits line's tick; null: the clock was refused. Only its change matters: it draws the band again as the times run down. */
       limitsMinute: number | null
       lastQuestion: LastQuestion
+      /** The questions before the last one (1.8.0), newest first, at most 3. Absent in a state stored before 1.8.0: read it as []. */
+      earlierQuestions: readonly EarlierQuestion[]
       /** The pins (1.6.0), oldest first, at most 50. Absent in a state stored before 1.6.0: read it as []. */
       pins: readonly Pin[]
       /** Whether the list under the `last answer` button is open (1.6.0). Absent in a state stored before 1.6.0: read it as false. */

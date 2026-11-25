@@ -8,7 +8,7 @@ import type { ScrollPress } from '../hooks/pins'
 import { WAKE_TEXT } from '../hooks/wake'
 import { band, start } from './account-fixtures'
 import { answer, COMPOSER, gate, held, KEY, question, session, spin, SUMMARY, toolRow, typed, valueOf } from './answer-fixtures'
-import { ask, entries, entry, labels, lastEarlier, listKeys, opened, Q, recent, uuidOf, uuids } from './answer-recent-fixtures'
+import { ask, entries, entry, heldEarlier, labels, lastEarlier, listKeys, opened, Q, recent, uuidOf, uuids } from './answer-recent-fixtures'
 import type { Entry } from './answer-recent-fixtures'
 import { A, B, pin, seededList, seededPins, SCROLL_REJECTED } from './pins-fixtures'
 
@@ -32,9 +32,10 @@ const earlierPress = (e: Entry): ScrollPress | undefined => {
 
 test('L1 three questions A, B, C: the list is C, B, A, newest first; a press on row 2 or 3 scrolls to its own uuid before the first await', async ($, on) => {
   const s = session(on)
-  recent(on)
+  const r = recent(on)
   await start($)
   await asked($, s, 'A', 'B', 'C')
+  expect(await heldEarlier($, r), 'kept by the settles, before any list open').toEqual(entries('B', 'A'))
   const ui = await opened($)
   expect(await listKeys(ui)).toEqual(['answer-last', earlierKey('B'), earlierKey('A')])
   expect(await labels(ui)).toEqual(['› C', '› B', '› A'])
@@ -65,12 +66,11 @@ test('L2 four questions: only the newest three are drawn (D, C, B); earlierQuest
   expect(uuids(lastEarlier(r))).toEqual(['uC', 'uB', 'uA'])
   const ui = await opened($)
   expect(await labels(ui)).toEqual(['› D', '› C', '› B'])
-  await ui.unmount()
   await ask($, s, 'E')
   expect(uuids(lastEarlier(r)), 'at most three: A is gone').toEqual(['uD', 'uC', 'uB'])
-  const again = await opened($)
-  expect(await labels(again)).toEqual(['› E', '› D', '› C'])
-  await again.unmount()
+  await ui.redraw()
+  expect(await labels(ui)).toEqual(['› E', '› D', '› C'])
+  await ui.unmount()
 })
 
 test('L3 one question: one row and no empty rows; with no pins there is no separator', async ($, on) => {
@@ -317,11 +317,13 @@ test('L12b the earlierQuestions write of an older settle lands after a newer set
   const g = gate()
   let isHeld = false
   const r = recent(on, {
-    before: async write => {
-      if (!isHeld && write[0]?.uuid === 'uC') {
-        isHeld = true
-        await g.wait // D's earlier write (C, B, A) waits
-      }
+    meddle: {
+      hold: async write => {
+        if (!isHeld && write[0]?.uuid === 'uC') {
+          isHeld = true
+          await g.wait // D's earlier write (C, B, A) waits
+        }
+      },
     },
   })
   await start($)
@@ -333,10 +335,10 @@ test('L12b the earlierQuestions write of an older settle lands after a newer set
   g.release()
   await spin()
   expect(await held($, s)).toEqual({ uuid: 'uE', text: 'E' })
+  expect(await heldEarlier($, r), 'what the engine holds, before any list open rebuilds it').toEqual(entries('D', 'C', 'B'))
   const ui = await opened($)
   expect(await labels(ui), 'D is not lost').toEqual(['› E', '› D', '› C'])
   await ui.unmount()
-  expect(uuids(r.writes.at(-1))).toEqual(['uD', 'uC', 'uB'])
 })
 
 test('L12c a session end while a settle\'s lastQuestion write waits: nothing is written after it', async ($, on) => {
@@ -373,11 +375,13 @@ test('L12d a session end while a settle\'s earlierQuestions write waits: the lis
   const g = gate()
   let isHeld = false
   const r = recent(on, {
-    before: async write => {
-      if (!isHeld && write[0]?.uuid === 'uC') {
-        isHeld = true
-        await g.wait
-      }
+    meddle: {
+      hold: async write => {
+        if (!isHeld && write[0]?.uuid === 'uC') {
+          isHeld = true
+          await g.wait
+        }
+      },
     },
   })
   await start($)
@@ -441,11 +445,12 @@ test('L15 the change function runs again on a version miss: the written list com
   const other: Entry[] = [{ uuid: 'uZ', text: 'Z' }]
   let misses = 0
   const r = recent(on, {
-    before: async (_, put) => {
-      if (misses === 0) {
+    meddle: {
+      miss: () => {
+        if (misses > 0) return undefined
         misses = 1
-        await put(other) // another write lands between the read and this write: this one then misses and the change function runs again
-      }
+        return other // another write landed between the read and this write: this one misses and the change function runs again on it
+      },
     },
   })
   await start($)
