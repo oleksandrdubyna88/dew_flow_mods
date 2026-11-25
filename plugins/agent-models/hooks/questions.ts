@@ -2,7 +2,7 @@
 // shows for one, and `earlierFrom`, the list of the questions before the last one (1.8.0). Nothing here reads or writes state.
 import type { SessionMessage } from 'claude-code'
 
-import type { EarlierQuestion } from '../types'
+import type { EarlierQuestion, LastQuestion } from '../types'
 import { cutText } from './pins'
 import { cleanPrompts } from './prompts'
 import { WAKE_TEXT } from './wake'
@@ -41,9 +41,17 @@ export function questionText(raw: string): string | undefined {
 }
 
 /**
+ * Whether `raw` is the wake text as the list would DRAW it (1.8.1): its shown text (first line, spaces collapsed, cut) is `WAKE_TEXT`.
+ * The wake is sent `asUser`, so its transcript row carries no origin and a typed copy cannot be told from it: both are the wake text.
+ */
+export const isWakeText = (raw: string): boolean => questionText(raw) === WAKE_TEXT
+
+/** Whether a stored first-row value holds the wake text: a settled value's `text`, or a pending value's `pending` (1.8.1). */
+export const isWakeValue = (cur: LastQuestion): boolean => cur !== null && ('uuid' in cur ? cur.text !== undefined && isWakeText(cur.text) : isWakeText(cur.pending))
+
+/**
  * The questions the person typed in `rows`, newest first (uuid and clean first line): not a tool result, a compaction summary, a
- * notification or peer wrapper (a tag the person typed is fine), and not the 1.7.0 wake text. The wake is sent `asUser`, so its row
- * carries no origin; the same words typed by the person are skipped too.
+ * notification or peer wrapper (a tag the person typed is fine), and not the wake text (its shown text, `isWakeText`).
  */
 export function typedQuestions(rows: readonly SessionMessage[]): EarlierQuestion[] {
   const found: EarlierQuestion[] = []
@@ -51,7 +59,8 @@ export function typedQuestions(rows: readonly SessionMessage[]): EarlierQuestion
     const row = rows[i]
     if (row === undefined || !isQuestionRow(row)) continue
     const clean = cleanPrompts([row.text])[0]
-    if (clean === undefined || clean.startsWith(SUMMARY_PREFIX) || clean === WAKE_TEXT || PEER_WRAPPER.test(row.text.trimStart())) continue
+    if (clean === undefined || clean.startsWith(SUMMARY_PREFIX) || PEER_WRAPPER.test(row.text.trimStart())) continue
+    if (isWakeText(row.text)) continue
     found.push({ uuid: row.uuid, text: firstLine(clean) })
   }
   return found
@@ -66,7 +75,7 @@ export const newestQuestion = (rows: readonly SessionMessage[]): EarlierQuestion
 /**
  * The questions before the one `anchor` names, newest first, at most `EARLIER_MAX`: first those of `rows` older than the row `anchor`
  * (none when that row is not in `rows`: they are all newer), then the entries of `kept` (what an older read saw, which a short read
- * cannot see again). A uuid is listed once, and `anchor` never.
+ * cannot see again; an entry that holds the wake text is dropped). A uuid is listed once, and `anchor` never.
  */
 export function earlierFrom(rows: readonly SessionMessage[], anchor: string, kept: readonly EarlierQuestion[]): EarlierQuestion[] {
   const at = rows.findIndex(row => row.uuid === anchor)
@@ -74,7 +83,7 @@ export function earlierFrom(rows: readonly SessionMessage[], anchor: string, kep
   const seen = new Set<string>([anchor])
   const list: EarlierQuestion[] = []
   for (const question of [...older, ...kept]) {
-    if (seen.has(question.uuid)) continue
+    if (seen.has(question.uuid) || isWakeText(question.text)) continue
     seen.add(question.uuid)
     list.push(question)
     if (list.length === EARLIER_MAX) break

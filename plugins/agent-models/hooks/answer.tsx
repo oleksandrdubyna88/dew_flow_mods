@@ -12,7 +12,7 @@ import type { EarlierQuestion, LastQuestion, Pin } from '../types'
 import { BUTTON_COLOR, CLOSE_COLOR, ENTRY_CAP } from './prompts'
 import type { ScrollPress } from './pins'
 import { PIN_COLOR, PIN_ICON, pinPress, runPress, unpin } from './pins'
-import { earlierFrom, EARLIER_MAX, findQuestion, newestQuestions, questionText } from './questions'
+import { earlierFrom, EARLIER_MAX, findQuestion, isWakeText, isWakeValue, newestQuestions, questionText } from './questions'
 
 export { findQuestion, newestQuestion, questionText, SUMMARY_PREFIX } from './questions'
 
@@ -112,7 +112,14 @@ export async function toggleAnswerList($: EngineInterface, closeOthers: () => Pr
     const isOpen = await read($, answerListOpen)
     if (!isOpen) await closeOthers().catch(() => undefined)
     await update($, answerListOpen, cur => !cur)
-    if (!isOpen) await refreshEarlier($) // the list is open: what a session from 1.7.0 or a reload did not fill is read from the transcript now
+    if (!isOpen) {
+      try { // the list is open (the press showed at once): a stored wake value is replaced by the newest question, as at a session start
+        if (isWakeValue(await currentLastQuestion($))) await restoreQuestion($)
+      } catch {
+        // the next open tries again
+      }
+      await refreshEarlier($) // what a session from 1.7.0 or a reload did not fill is read from the transcript now
+    }
   } catch {
     // a refused read or write: the list stays as it was; the next press tries again
   }
@@ -213,7 +220,7 @@ async function recentRows($: EngineInterface, last: number): Promise<readonly Se
 
 // What a new pending question keeps of the value before it: the uuid of the question it replaces (`previous`) and its text.
 const previousOf = (cur: LastQuestion): { previous?: string; previousText?: string } => {
-  if (cur === null) return {}
+  if (cur === null || isWakeValue(cur)) return {} // a wake value (stored by 1.7.0 or 1.8.0) is no question to go back to
   if ('uuid' in cur) return { previous: cur.uuid, ...(cur.text === undefined ? {} : { previousText: cur.text }) }
   if (cur.previous === undefined) return {}
   return { previous: cur.previous, ...(cur.previousText === undefined ? {} : { previousText: cur.previousText }) }
@@ -255,7 +262,7 @@ async function settle($: EngineInterface, pending: Pending, uuid: string, mine: 
 
 /**
  * After `next(e)` of a `prompt.submit`: a prompt the person typed (here or through the bridge) becomes the last question. A
- * notification, a peer, a plugin, a meta prompt, a slash command and a dropped prompt leave the value as it is. The value is
+ * notification, a peer, a plugin, a meta prompt, a slash command, the wake text (1.8.1) and a dropped prompt leave the value as it is. The value is
  * `pending` (with the question before it as `previous`) while the text is not in the transcript (queued behind a running turn,
  * or typed into one). The pending write is the first thing here, with no `await` before it, so submits start in their order;
  * the writes may land out of order, and the value is still the newest submit's: the change function checks the generation, and
@@ -265,6 +272,7 @@ export async function noteSubmit($: EngineInterface, e: PromptSubmitInput, resul
   try {
     if (result.drop !== undefined || e.command !== undefined || e.isMeta === true || !PERSON_ORIGINS.has(e.origin.kind)) return
     const entered = result.text
+    if (isWakeText(entered)) return // the wake text is never a question, typed or sent: row 1 stays, a pending question stays pending
     const mine = (generation += 1)
     const epoch = endEpoch
     const written = await update($, lastQuestion, cur => (mine === generation ? { pending: entered, ...previousOf(cur) } : cur))
@@ -304,24 +312,36 @@ export async function retryPending($: EngineInterface, isDeep: boolean): Promise
 }
 
 /**
- * At a session start. With no value (a resume, or a session from before 1.5.0): the newest four questions of the transcript, the three
- * older ones written first, then the newest. With a value and no `earlierQuestions` (a session from 1.7.0): only the list is filled from
- * the questions older than the first row's. Never rejects.
+ * At a session start. With no value (a resume, or a session from before 1.5.0): the newest four questions of the transcript; the list
+ * (the older ones merged with the stored list by `earlierFrom`) is written first, then the newest. With a value and no `earlierQuestions`
+ * (a session from 1.7.0): only the list is filled from the questions older than the first row's. A stored wake value (1.7.0 kept it,
+ * 1.8.0 let the owner type it) counts as no value (1.8.1): the newest question replaces it, null when the rows hold none; a refused or empty read changes nothing. Never rejects.
  */
 export async function restoreQuestion($: EngineInterface): Promise<void> {
   const mine = generation // a session end (or a submit) during the reads below owns the value
+  const epoch = endEpoch
   try {
     const cur = await read($, lastQuestion)
-    if (cur !== null) return await fillEarlier($, cur, mine) // a reload keeps the session: the value stays
+    if (cur !== null && !isWakeValue(cur)) return await fillEarlier($, cur, mine) // a reload keeps the session: the value stays
     const wanted = EARLIER_MAX + 1
-    const recent = await recentRows($, RESTORE_ROWS)
-    let found = newestQuestions(recent, wanted)
-    if (found.length < wanted && recent.length >= RESTORE_ROWS) found = newestQuestions(await recentRows($, ENTRY_CAP), wanted)
-    const [newest, ...rest] = found
-    if (newest === undefined) return
-    if (rest.length > 0) await update($, earlierQuestions, raw => (mine === generation ? rest : listOf(raw)))
+    let rows = await recentRows($, RESTORE_ROWS)
+    let found = newestQuestions(rows, wanted)
+    if (found.length < wanted && rows.length >= RESTORE_ROWS) {
+      rows = await recentRows($, ENTRY_CAP)
+      found = newestQuestions(rows, wanted)
+    }
+    const [newest] = found
+    if (newest === undefined) { // rows were read and none is a question: a stored wake value goes (an empty or refused read leaves it for the next try)
+      if (cur !== null && rows.length > 0) await update($, lastQuestion, raw => (mine === generation && raw !== null && isWakeValue(raw) ? null : raw))
+      return
+    }
+    // The list first, from the rows plus what stands. Not `writeEarlier`: its anchor test would stop a list that holds the question row 1 is about to press.
+    const stored = await currentEarlierQuestions($) // a refused read of the list is no list: the restore goes on
+    if (!sameList(stored, earlierFrom(rows, newest.uuid, stored))) {
+      await update($, earlierQuestions, raw => (mine === generation && epoch === endEpoch ? earlierFrom(rows, newest.uuid, listOf(raw)) : listOf(raw)))
+    }
     const restored = { uuid: newest.uuid, text: newest.text }
-    await update($, lastQuestion, raw => (raw === null && mine === generation ? restored : raw))
+    await update($, lastQuestion, raw => ((raw === null || isWakeValue(raw)) && mine === generation ? restored : raw))
   } catch {
     // the transcript is not readable yet; the first submit sets the value
   }

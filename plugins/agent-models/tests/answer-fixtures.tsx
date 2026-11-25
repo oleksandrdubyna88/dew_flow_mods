@@ -50,6 +50,7 @@ export type Reads = { last: number | undefined }[]
 export type Session = {
   rows: SessionMessage[] // the transcript the stub answers with; the test changes it
   isBroken: boolean // the messages read throws
+  isDenied: boolean // the messages read is refused by the engine's permission layer (a deny: no rows)
   drop: string | undefined // a prompt with this text is dropped by the engine's own bottom
   reads: Reads
   writes: LastQuestion[] // every write of `lastQuestion`, in order
@@ -61,7 +62,7 @@ export type Session = {
 
 /** A session whose transcript, `lastQuestion` writes and toasts the test sees. `$.session.start` is called by the test. */
 export const session = (on: On, rows: SessionMessage[] = []): Session => {
-  const s: Session = { rows, isBroken: false, drop: undefined, reads: [], writes: [], toasts: [], seed: undefined, read: null, hold: undefined }
+  const s: Session = { rows, isBroken: false, isDenied: false, drop: undefined, reads: [], writes: [], toasts: [], seed: undefined, read: null, hold: undefined }
   base(on)
   identities(on, [() => identityOf('dev@example.com')])
   statusRuns(on, () => ok(JSON.stringify({ loggedIn: false })))
@@ -76,6 +77,7 @@ export const session = (on: On, rows: SessionMessage[] = []): Session => {
       await held.wait
     }
     if (s.isBroken) throw new Error('no transcript')
+    if (s.isDenied) return { deny: 'refused' }
     return { value: answered }
   })
   on('state.get', KEY, async (_, e, next) => {

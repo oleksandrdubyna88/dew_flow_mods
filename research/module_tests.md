@@ -42,7 +42,7 @@ The release tests use an `update` hook on the bare remote for the refused tag, b
 
 ## Mod cases (`claude plugin test`)
 
-The 441 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
+The 460 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
 and limits line (with its ceilings, retries, 5-hour and weekly reset times), tasks, messages, answer pins, the answer
 list, the wake and the recent questions, and the races between them. The first 391 were copied byte for byte with the mod.
 Since 1.7.0 the mod is developed in this repository, so cases are added with each version. A change under
@@ -52,6 +52,9 @@ Two flows were added here. The 1.7.0 wake: W1-W14, in `tests/wake.test.tsx` (its
 The 1.8.0 recent questions in the `last answer` list: L1-L15 with their sub-cases (L4b, L6b-d, L7b, L8b, L11b, L12b-d), in
 `tests/answer-recent.test.tsx` (the list, the rebuilds, the session start and end) and `tests/answer-recent-races.test.tsx`
 (L12-L15, the races of the two writes of a settle); their helpers are in `tests/answer-recent-fixtures.tsx`.
+The 1.8.1 flow, the wake text never a question: V1-V14 with their sub-cases (V4b, V6b, V7a-c, V8b), in
+`tests/answer-wake-text.test.tsx` (the typed wake text, the repair of a stored wake value at the session start and at the
+list open, its races, a refused or empty read; it uses the helpers of the two fixture files above).
 
 Known flake, R4: `tests/account-retry.test.tsx`, "R4 a timer a draw started was refused…", fails about one run in
 eight, in the 1.5.0 build too. A red run is a red run and is not re-run to get green. It is traced to the shared state
