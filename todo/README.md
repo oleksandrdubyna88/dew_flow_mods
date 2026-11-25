@@ -9,6 +9,7 @@ this folder holds this repository's side of it.
 | Plan | Status | Scope |
 |---|---|---|
 | [PLAN_from_conventions.md](PLAN_from_conventions.md) | plan only (2026-11-23) | the stories this repository carries from the move: the copy and its proof (story 2.1), then the release gate and the first promotion (2.2, 2.3) |
+| [PLAN_agent_models_1_8_1.md](PLAN_agent_models_1_8_1.md) | plan only (2026-11-25) | mod 1.8.1: the wake text `продолжай автономно` is never a question in the `last answer` list (the owner, 2026-11-25) |
 
 ## Follow-ups (no plan yet)
 
