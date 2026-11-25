@@ -10,7 +10,7 @@ import { band, start } from './account-fixtures'
 import type { Ui } from './account-fixtures'
 import { answer, COMPOSER, gate, held, KEY, question, session, spin, typed, valueOf } from './answer-fixtures'
 import type { Session } from './answer-fixtures'
-import { ask, entries, entry, labels, lastEarlier, opened, Q, recent, uuids } from './answer-recent-fixtures'
+import { ask, EARLIER_KEY, entries, entry, labels, lastEarlier, opened, Q, recent, uuids } from './answer-recent-fixtures'
 import type { Entry } from './answer-recent-fixtures'
 
 // The wake text of 1.8.1 (plan todo/PLAN_agent_models_1_8_1.md, V1 to V13): `продолжай автономно` is never shown as a question,
@@ -104,8 +104,10 @@ test('V4b the same, and retryPending settles the pending wake value during the r
   const ui = await band($)
   void ui.press({ key: 'last-answer' })
   await spin()
+  expect(s.hold, 'the repair\'s read is held (it was issued)').toBeUndefined()
   await $.turn.start({ text: 'x', turnId: 't2' }) // the pending wake row is in the transcript: it settles to the wake row
   await spin()
+  expect(s.writes.some(w => isSettled(w, 'uW')), 'the settle landed during the held read').toBe(true)
   g.release()
   await spin()
   expect(await nowHeld(ui, s)).toEqual({ uuid: 'uD', text: 'D' })
@@ -212,6 +214,7 @@ test('V7c a newer submit between the two writes of the repair: no lastQuestion w
   expect(new Set(between).size, 'between the two writes no question shows twice').toBe(between.length)
   s.rows = [...s.rows, Q('E')]
   await typed($, 'E')
+  expect(isHeld, 'the repair\'s lastQuestion write was held').toBe(true)
   g.release()
   await spin()
   expect(await nowHeld(ui, s)).toEqual({ uuid: 'uE', text: 'E' })
@@ -330,4 +333,12 @@ test('V13 (absence) a question that only contains the wake words is a normal que
   await typed($, text)
   expect(valueOf(s)).toEqual({ uuid: 'uT', text })
   expect(uuids(lastEarlier(r))).toEqual(['uA'])
+})
+
+test('V14 a refused read of earlierQuestions does not stop the session-start restore: lastQuestion becomes D', async ($, on) => {
+  const s = session(on, [Q('D'), answer('a1'), WAKE_ROW(), answer('a2')])
+  s.seed = WAKE_VALUE
+  on('state.get', EARLIER_KEY, () => ({ deny: 'refused' }))
+  await start($)
+  expect(valueOf(s)).toEqual({ uuid: 'uD', text: 'D' })
 })

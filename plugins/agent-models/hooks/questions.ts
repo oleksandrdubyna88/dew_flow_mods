@@ -47,7 +47,7 @@ export function questionText(raw: string): string | undefined {
 export const isWakeText = (raw: string): boolean => questionText(raw) === WAKE_TEXT
 
 /** Whether a stored first-row value holds the wake text: a settled value's `text`, or a pending value's `pending` (1.8.1). */
-export const isWakeValue = (cur: LastQuestion): boolean => cur !== null && ('uuid' in cur ? cur.text === WAKE_TEXT : isWakeText(cur.pending))
+export const isWakeValue = (cur: LastQuestion): boolean => cur !== null && ('uuid' in cur ? cur.text !== undefined && isWakeText(cur.text) : isWakeText(cur.pending))
 
 /**
  * The questions the person typed in `rows`, newest first (uuid and clean first line): not a tool result, a compaction summary, a
@@ -60,9 +60,8 @@ export function typedQuestions(rows: readonly SessionMessage[]): EarlierQuestion
     if (row === undefined || !isQuestionRow(row)) continue
     const clean = cleanPrompts([row.text])[0]
     if (clean === undefined || clean.startsWith(SUMMARY_PREFIX) || PEER_WRAPPER.test(row.text.trimStart())) continue
-    const text = firstLine(clean)
-    if (text === WAKE_TEXT) continue
-    found.push({ uuid: row.uuid, text })
+    if (isWakeText(row.text)) continue
+    found.push({ uuid: row.uuid, text: firstLine(clean) })
   }
   return found
 }
@@ -84,7 +83,7 @@ export function earlierFrom(rows: readonly SessionMessage[], anchor: string, kep
   const seen = new Set<string>([anchor])
   const list: EarlierQuestion[] = []
   for (const question of [...older, ...kept]) {
-    if (seen.has(question.uuid) || question.text === WAKE_TEXT) continue
+    if (seen.has(question.uuid) || isWakeText(question.text)) continue
     seen.add(question.uuid)
     list.push(question)
     if (list.length === EARLIER_MAX) break

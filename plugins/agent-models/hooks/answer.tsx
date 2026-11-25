@@ -262,7 +262,7 @@ async function settle($: EngineInterface, pending: Pending, uuid: string, mine: 
 
 /**
  * After `next(e)` of a `prompt.submit`: a prompt the person typed (here or through the bridge) becomes the last question. A
- * notification, a peer, a plugin, a meta prompt, a slash command and a dropped prompt leave the value as it is. The value is
+ * notification, a peer, a plugin, a meta prompt, a slash command, the wake text (1.8.1) and a dropped prompt leave the value as it is. The value is
  * `pending` (with the question before it as `previous`) while the text is not in the transcript (queued behind a running turn,
  * or typed into one). The pending write is the first thing here, with no `await` before it, so submits start in their order;
  * the writes may land out of order, and the value is still the newest submit's: the change function checks the generation, and
@@ -312,10 +312,10 @@ export async function retryPending($: EngineInterface, isDeep: boolean): Promise
 }
 
 /**
- * At a session start. With no value (a resume, or a session from before 1.5.0): the newest four questions of the transcript, the three
- * older ones written first, then the newest. With a value and no `earlierQuestions` (a session from 1.7.0): only the list is filled from
- * the questions older than the first row's. A stored wake value (1.7.0 kept it, 1.8.0 let the owner type it) counts as no value
- * (1.8.1): the newest question replaces it, null when the rows hold none; a refused or empty read changes nothing. Never rejects.
+ * At a session start. With no value (a resume, or a session from before 1.5.0): the newest four questions of the transcript; the list
+ * (the older ones merged with the stored list by `earlierFrom`) is written first, then the newest. With a value and no `earlierQuestions`
+ * (a session from 1.7.0): only the list is filled from the questions older than the first row's. A stored wake value (1.7.0 kept it,
+ * 1.8.0 let the owner type it) counts as no value (1.8.1): the newest question replaces it, null when the rows hold none; a refused or empty read changes nothing. Never rejects.
  */
 export async function restoreQuestion($: EngineInterface): Promise<void> {
   const mine = generation // a session end (or a submit) during the reads below owns the value
@@ -336,7 +336,7 @@ export async function restoreQuestion($: EngineInterface): Promise<void> {
       return
     }
     // The list first, from the rows plus what stands. Not `writeEarlier`: its anchor test would stop a list that holds the question row 1 is about to press.
-    const stored = listOf(await read($, earlierQuestions))
+    const stored = await currentEarlierQuestions($) // a refused read of the list is no list: the restore goes on
     if (!sameList(stored, earlierFrom(rows, newest.uuid, stored))) {
       await update($, earlierQuestions, raw => (mine === generation && epoch === endEpoch ? earlierFrom(rows, newest.uuid, listOf(raw)) : listOf(raw)))
     }
