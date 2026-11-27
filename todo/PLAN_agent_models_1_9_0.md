@@ -1,9 +1,19 @@
 # PLAN — agent-models mod 1.9.0: the `last answer` list keeps every question in order and drops rows a compaction removed
 
-> Status: **plan only, 2026-11-27; review next.** Scope: `plugins/agent-models/` (where the `last answer` list takes its questions
+> Status: **APPROVED 2026-11-27 (epoch 1, by reviewers: coai `proceed`, the Opus review and the Opus re-review of the
+> transcript-file design); build next.** Scope: `plugins/agent-models/` (where the `last answer` list takes its questions
 > from, the press on a pin row, version 1.9.0, the mod's tests), `todo/README.md`, `research/module_tests.md`.
 > The release goes the normal way of this repository (the promotion with the owner's approval click). Parent: the mod at
 > `bc28b00` (1.8.1; plans `research/PLAN_agent_models_1_8_0.md`, `todo/PLAN_agent_models_1_8_1.md`).
+
+## Plan changes
+
+> Epoch 1 · approved 2026-11-27 · by reviewers · state: open
+
+  (The baseline: the first design (one `asked` list settled from drawn rows) was reviewed by coai and Opus and replaced
+  by the transcript-file design, which the Opus re-review checked on 145 real transcripts; its findings (probe P7, byte
+  ends, a parse cache, 3 not 4, pending expiry, the wider fallback, pins kept at a deny, the filter details) are in.
+  Rejected: the coai copy-proof finding (the proof uses the tag agent-models--v1.6.0 above 1.6.0).)
 
 ## Goal (the owner's words, 2026-11-27, translated from Russian)
 
@@ -50,6 +60,9 @@ The session log had compactions at lines 499, 6318 and 7635 and a restart after 
 - P6 (read-only, from the file): an idle question is a `user` line with `origin.kind: human`, `promptSource: typed`; a
   queued one an `attachment` line `queued_command` with `origin.kind: human` and `prompt`; both with `uuid`, `timestamp`,
   `parentUuid`. A compaction is a `system` line `compact_boundary` (three in this file).
+- P7 (`fs-probe`, a dev mod, at its `session.start`): `$.session.info()` gave `transcriptPath`; `$.fs.stat` gave 24,184,065
+  bytes; `$.fs.read` of the last 1 MiB as text answered 1,044,652 characters (484 lines, 10 question-like) in 40 ms. The
+  organization's plugin did not refuse the read.
 
 ## Design
 
