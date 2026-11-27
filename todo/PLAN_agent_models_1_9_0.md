@@ -59,17 +59,27 @@ not a documented API (§ F, the fallback).
 
 ### A. Reading the questions (`hooks/asked.ts`, new; pure parsing in `hooks/transcript.ts`, new)
 
-1. **The window.** `$.session.info()` → `transcriptPath`; `$.fs.stat` → `size`; `$.fs.read(path, { offset, length })` of the
-   last 1 MiB (the first, cut line dropped). When the walk (A2) reaches the window's start before 4 questions and before a
-   compaction mark, ONE deeper read of the last 4 MiB (the engine's per-read cap). No more.
-2. **The live chain.** From the newest line that has a `uuid` and `isSidechain` false, walk `parentUuid` (or
-   `logicalParentUuid`) back through the lines of the window. Stop at a `system` line with `subtype: "compact_boundary"`, at a
+1. **The window.** `$.session.info()` → `transcriptPath`; `$.fs.stat` → `size`; `$.fs.read(path, { offset, length })` as text
+   of the last 1 MiB. When the walk (A2) reaches the window's start before 3 questions and before a compaction mark, ONE
+   deeper read of the last 4 MiB (the engine's per-read cap). No more: the list may show fewer than 3 when they are further
+   back (measured: the 3rd question was past 1 MiB in 4 of 16 compacted sessions, past 4 MiB in 1).
+   - **Byte ends.** Each line's byte end is counted back from the window's end with `TextEncoder` (a text read gives
+     UTF-16 text; Cyrillic and a U+FFFD at the cut make character counts wrong). The first line is dropped unless the
+     offset is 0; a last line with no newline is dropped (it is still being written).
+   - **A module cache** of parsed lines (`uuid`, `parentUuid`, kind, the question's shown text, byte end): a refresh reads
+     only the bytes after the cached end (the whole window again when the file got smaller or the path changed). A reload
+     starts the cache empty.
+2. **The live chain.** From the newest line that has a `uuid` and `isSidechain` false, walk `parentUuid` back through the
+   lines of the window. Stop at a `system` line with `subtype: "compact_boundary"`, at a
    missing parent, or at the window's start. Rows on another branch (a `/rewind`) are not on the chain; rows before the last
-   compaction are behind its mark. (Measured on session `fca0c5b7`: the walk from the newest row met the last mark after 802
-   steps and held all 5 queued and all 15 typed questions after it.)
+   compaction are behind its mark; a boundary's `compactMetadata.preservedSegment` lines (assistant, tool results, turn
+   durations, never a question) are not walked into. (Measured: on session `fca0c5b7` the walk met the last mark after 802
+   steps with all 5 queued and 15 typed questions after it; replayed at 3866 file prefixes, 0 misses; across 145 transcripts,
+   0 questions off the chain. No `/rewind` branch exists in them: A3 is tested on fixtures only.)
 3. **A question** is a chain line that is (a) `type: "user"` with `origin.kind: "human"`, `message.content` a string (or text
-   blocks with no `tool_result`), not `isMeta`, not `isCompactSummary`, not a slash command (`<command-name>`); text = that
-   content; or (b) `type: "attachment"` with `attachment.type: "queued_command"`, `attachment.origin.kind: "human"`,
+   blocks with no `tool_result`), not `isMeta`, not `isCompactSummary`, not a slash command (content that STARTS with `<command-message>` or
+   `<command-name>` and has no `promptSource`); `promptSource` `typed`, `queued` and `suggestion_accepted` are questions;
+   text = that content; or (b) `type: "attachment"` with `attachment.type: "queued_command"`, `attachment.origin.kind: "human"`,
    `attachment.commandMode: "prompt"`; text = `attachment.prompt`. Its id is the line's `uuid` (what the screen draws: § Probe
    P2, P3). Shown text: `questionText`; the wake text never (`isWakeText`).
 4. **The result:** the newest 3 questions on the chain, newest first, and `size` (the file length the read saw).
@@ -79,10 +89,13 @@ not a documented API (§ F, the fallback).
 - `recent: { questions: readonly { id: string; text: string }[]; size: number }` (newest first, at most 3) and
   `pending: readonly { text: string; from: number }[]` (oldest first, at most 8) in `PluginState['agent-models']`.
 - **Submit** (`noteSubmit`): a person's prompt (`composer`, `bridge`; not a slash command, meta, dropped, or the wake text)
-  appends `{ text, from }` to `pending`, `from` = the file size from one `$.fs.stat` made first (`recent.size` when the stat
-  is refused, 0 when none). No transcript lookup here.
+  appends `{ text, from, turns: 0 }` to `pending`, `from` = the file size from one `$.fs.stat` made first (`recent.size`
+  when the stat is refused; no entry at all when neither is known). No transcript lookup here.
+- **Expiry:** each main-loop `turn.complete` adds 1 to `turns` of every pending entry; an entry at 2 is dropped. Some
+  submits never become one question line (a queued prompt taken back from the queue, queued prompts joined at a turn's
+  end, bash mode); without expiry one stuck entry would shift the first-come match for every later question.
 - **Refresh** (`refreshRecent($)`): runs A, then writes `recent`, and drops from `pending` the oldest k entries, k = the
-  number of questions on the chain that lie in the file after the oldest entry's `from` (first come, first matched: no text
+  number of questions on the chain whose line ends after the oldest entry's `from` (`lineEnd > from`) (first come, first matched: no text
   is compared, so the same text twice and a paste that the file stores differently both match in order). One refresh at a
   time per module (a guard); a refresh whose read fails changes nothing.
 - **Refresh points:** the list open (after its `answerListOpen` write), `turn.start` and `turn.complete` of the main loop,
@@ -100,9 +113,10 @@ not a documented API (§ F, the fallback).
 
 ### D. Pins after a compaction (`hooks/pins.tsx`)
 
-- A press whose scroll answers the deny `nothing drawn under that requestId` (one constant, the probe's exact text) removes
-  that pin and toasts `pin: that answer was compacted away — removed`. Any other deny keeps the pin and toasts as today.
-  (§ Probe P2: a live row that was not drawn since the load still scrolls, so this deny means the row is gone.)
+- A press whose scroll answers the deny `nothing drawn under that requestId` (one constant, the probe's exact text)
+  toasts `pin: that answer is not in the transcript any more (compacted?) — press x to remove it`, and KEEPS the pin: the
+  deny text is measured only in fullscreen, and a removal on a misread deny would delete live pins. Any other deny toasts
+  as today. (Removing it at the press is a later step once the same press is measured outside fullscreen.)
 
 ### E. Version
 
@@ -111,8 +125,9 @@ not a documented API (§ F, the fallback).
 
 ### F. The fallback
 
-- When the file cannot be read, or the window parses but holds no line the walk recognises (a changed format), the list
-  falls back to the 1.8.1 source for the questions it can see: the newest 3 `typedQuestions` of `$.session.messages`, and a
+- When the file cannot be read, or the window parses but holds no line the walk recognises (a changed format), or the
+  newest typed question of `$.session.messages` (P2: idle questions are there) is not among the walked questions (a renamed
+  field, an older transcript with no `origin`), the list falls back to the 1.8.1 source for the questions it can see: the newest 3 `typedQuestions` of `$.session.messages`, and a
   one-time toast per session `last answer: transcript format not recognised — showing what the engine lists`.
 
 ## Files
@@ -132,7 +147,7 @@ not a documented API (§ F, the fallback).
 
 ## Build order
 
-1. Fixture transcripts (JSONL text) built from the shapes of § Probe P6, with no real session content. Tests A1–A16 written
+1. Fixture transcripts (JSONL text) built from the shapes of § Probe P6, with no real session content. Tests A1–A20 written
    first and run RED against 1.8.1.
 2. The code; the whole suite GREEN (a red R4 in CI blocks the merge like any red check).
 3. The CI set: `plugin validate .`, `validate --json` + `tools/type-baseline.mjs`, `npm test`, `copy-proof`, `mods-gate`,
@@ -159,9 +174,17 @@ not a documented API (§ F, the fallback).
 - A12 a state from 1.8.1 (`lastQuestion`, `earlierQuestions` set, no `recent`): the list draws from the first refresh; the
   old values are not shown.
 - A13 a reload (fresh module) keeps `recent` and `pending`; the next refresh settles a pending one.
-- A14 a pin press with the deny `nothing drawn under that requestId` removes the pin and toasts; another deny keeps it.
+- A14 a pin press with the deny `nothing drawn under that requestId` keeps the pin and toasts the compacted text; another
+  deny toasts as today.
 - A15 the queued question's id after a restart: the same file, the same uuid (the list after a session start lists it).
 - A16 a 100,000-character pasted question: the shown text is cut; the parse does not copy whole lines into state.
+- A17 a pending entry with no matching line is dropped at its second `turn.complete`, and the next question settles the
+  next entry, not the stuck one.
+- A18 byte ends: a window of Cyrillic lines cut mid-character; a line ending exactly at `from`; a last line with no newline;
+  offset 0 keeps the first line; the cache reads only the new bytes and rereads after the file shrank.
+- A19 the fallback also when the newest typed question of `$.session.messages` is not on the walked chain (a fixture
+  with no `origin`); a preserved-segment fixture yields no question.
+- A20 a refused stat with no `recent`: no pending entry is added.
 
 ## Owner checks (after the release reaches this machine)
 
