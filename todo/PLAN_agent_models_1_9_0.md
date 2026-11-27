@@ -14,6 +14,7 @@
   by the transcript-file design, which the Opus re-review checked on 145 real transcripts; its findings (probe P7, byte
   ends, a parse cache, 3 not 4, pending expiry, the wider fallback, pins kept at a deny, the filter details) are in.
   Rejected: the coai copy-proof finding (the proof uses the tag agent-models--v1.6.0 above 1.6.0).)
+- 1.1 · 2026-11-27 · agent · approach — the build read unclear points one way: 3 questions everywhere (A4 said 4); a refused stat or read changes nothing and only an empty `transcriptPath` falls back; the fallback toast only when the engine list is not empty; in the fallback a pending entry settles on a question new to the list; the engine list is read before the file
 
 ## Goal (the owner's words, 2026-11-27, translated from Russian)
 
