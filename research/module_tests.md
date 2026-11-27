@@ -42,7 +42,7 @@ The release tests use an `update` hook on the bare remote for the refused tag, b
 
 ## Mod cases (`claude plugin test`)
 
-The 435 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
+The 443 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
 and limits line (with its ceilings, retries, 5-hour and weekly reset times), tasks, messages, answer pins, the answer
 list, the wake and the questions read from the transcript file, and the races between them. The first 391 were copied
 byte for byte with the mod; in 1.9.0 the question cases among them were replaced (below).

@@ -10,7 +10,7 @@ import {
 import { accountButton, currentLimits, emailOf, isLimitsShown, limitsClock, limitsRow, limitsText, tickLimits, watchLimitsMinute } from './limits'
 import { closeTasks, currentTasks, tasksButton, tasksLabel, tasksView } from './tasks'
 import { accountRowCells, answerButton, answerList, clearAnswerList, closeAnswerList, currentAnswerListOpen, isAnswerShown, tickAnswer } from './answer'
-import { clearAsked, currentPending, currentRecent, noteSubmit, refreshRecent } from './asked'
+import { clearAsked, currentPending, currentRecent, noteSubmit, refreshRecent, submitSize } from './asked'
 import { clearPins, currentPins, pinnedRow } from './pins'
 import { clearWake, currentWake, wakeButton, wakeLabel, wakeTick } from './wake'
 
@@ -37,8 +37,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 }
 
 // The 2 s timer's work: the agent rows, the limits line (its minute, a passed reset's fetch), the account retry (an unread or
-// stale unknown account is read again without a draw or a turn), the wake (hooks/wake.tsx) and the transcript file's look (hooks/asked.ts, while the
-// `last answer` list is open or a question is pending). Each never rejects.
+// stale unknown account is read again without a draw or a turn), the wake (hooks/wake.tsx) and the transcript file's look (hooks/asked.ts). Each never rejects.
 const tick = async ($: EngineInterface): Promise<void> => {
   await Promise.all([refresh($), tickLimits($), retryAccount($), wakeTick($), tickAnswer($)])
 }
@@ -317,7 +316,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (e.agentId === undefined) {
       void refreshAccountIfStale($) // a subagent's end never reads
-      void refreshRecent($, true) // a question typed during this turn is in the file now; the pending entries that did not settle count a turn
+      void refreshRecent($, { isTurnEnd: true }) // a question typed during this turn is in the file now; the pending entries that did not settle count a turn
     }
     return result
   })
@@ -336,8 +335,9 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    const at = submitSize($) // the file's length BEFORE the engine stores an idle prompt's line
     const result = await next(e)
-    void noteSubmit($, e, result) // not awaited: a slow transcript read never delays the prompt; it never rejects
+    void noteSubmit($, e, result, at) // not awaited: a slow transcript read never delays the prompt; it never rejects
     return result
   })
 

@@ -3,11 +3,14 @@
 // engine's own, not a documented API: a line this file does not know is a line it does not use. Nothing here reads or writes state.
 import { shownQuestion } from './questions'
 
-/** What the walk needs of a line; `end` is the absolute byte offset after the line's newline. `shown`: the line is a question with this text. */
-export type WalkLine = { uuid?: string; parent?: string; side: boolean; mark: boolean; shown?: string; end: number }
+/**
+ * What the walk needs of a line; `end` is the absolute byte offset after the line's newline. `shown`: the line is a question with this text.
+ * `legacy`: a user line with no `origin` at all whose text would be a question (the format of an older transcript: the walk cannot list it).
+ */
+export type WalkLine = { uuid?: string; parent?: string; side: boolean; mark: boolean; shown?: string; legacy?: true; end: number }
 export type Found = { id: string; text: string; end: number }
-/** `needsMore`: the walk ran out of lines in a window that does not start the file, with no mark seen. */
-export type Walk = { questions: Found[]; needsMore: boolean; isRecognised: boolean }
+/** `needsMore`: the walk ran out of lines (or found none to start from) in a window that does not start the file, with no mark seen. `byId`: every line of the window with a uuid. */
+export type Walk = { questions: Found[]; needsMore: boolean; isRecognised: boolean; byId: ReadonlyMap<string, WalkLine> }
 
 const encoder = new TextEncoder()
 
@@ -40,6 +43,13 @@ function questionOf(j: Record<string, unknown>): string | undefined {
   return raw === undefined ? undefined : shownQuestion(raw)
 }
 
+// A user line with no `origin` that is no meta line, summary or tool result and whose text is a question: an older format.
+function isLegacy(j: Record<string, unknown>): boolean {
+  if (j.type !== 'user' || isRecord(j.origin) || j.isMeta === true || j.isCompactSummary === true || !isRecord(j.message)) return false
+  const raw = textOf(j.message.content)
+  return raw !== undefined && shownQuestion(raw) !== undefined
+}
+
 function parseLine(raw: string, end: number): WalkLine {
   try {
     const j: unknown = JSON.parse(raw)
@@ -51,6 +61,7 @@ function parseLine(raw: string, end: number): WalkLine {
       side: j.isSidechain === true,
       mark: j.type === 'system' && j.subtype === 'compact_boundary',
       ...(shown === undefined ? {} : { shown }),
+      ...(shown === undefined && isLegacy(j) ? { legacy: true as const } : {}),
       end,
     }
   } catch {
@@ -108,5 +119,6 @@ export function walk(lines: readonly WalkLine[], hasMore: boolean): Walk {
     }
     cur = next
   }
-  return { questions, needsMore, isRecognised }
+  if (newest === undefined && hasMore) needsMore = true // a window with no line to start from (its only line is longer than it) says nothing of the file before it
+  return { questions, needsMore, isRecognised, byId }
 }

@@ -149,9 +149,33 @@ test('A4d the deeper read is ONE: a file of more than 4 MiB with one question at
   expect(size).toBeGreaterThan(4 * MIB)
   expect(w.reads).toEqual([
     { offset: size - MIB, length: MIB },
-    { offset: size - 4 * MIB, length: 4 * MIB },
+    { offset: size - (4 * MIB - 16), length: 4 * MIB - 16 }, // 16 bytes under the cap: a U+FFFD at an edge makes the text longer than the bytes
   ])
   expect(ids(w)).toEqual(['near'])
+})
+
+test('A4g a failed deeper read keeps the window: its questions are written', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('far', 'beyond the window')
+  for (let i = 0; i < 14; i += 1) f.big(`big${i}`, 100_000)
+  f.typed('near', 'in the window')
+  w.refuseReadOver = MIB // the 1 MiB window is read; the deeper read is refused
+  await start($)
+  expect(w.reads).toHaveLength(2)
+  expect(ids(w)).toEqual(['near'])
+})
+
+test('A4h a window with no complete line (the last line is over 1 MiB) asks for the deeper read', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('qA', 'one')
+  f.typed('qB', 'two')
+  f.typed('qC', 'three')
+  f.big('giant', 1_200_000)
+  await start($)
+  expect(w.reads).toHaveLength(2)
+  expect(ids(w)).toEqual(['qC', 'qB', 'qA'])
 })
 
 test('A4e after the deeper read a refresh reads only the bytes after what it parsed, and makes no deeper read again', async ($, on) => {
@@ -268,6 +292,34 @@ test('A19a the fallback also when the newest typed question the engine lists is 
   expect(w.toasts).toEqual([FALLBACK_TOAST])
   await turnStart($)
   expect(w.toasts, 'one toast per session').toEqual([FALLBACK_TOAST])
+})
+
+test('A19d peer rows, skill bodies and meta rows are no typed question: the engine lists them, the file says why they are not questions, and that is no format miss', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('qA', 'first')
+  f.assistant('a1')
+  f.peerReal('p1') // a header line first, the tag later: the start-only wrapper test of the engine rows misses it
+  f.metaPlain('m1')
+  w.messages = [
+    { role: 'user', text: 'first', toolUses: [], uuid: 'qA' },
+    { role: 'user', text: 'Another Claude session sent a message:\n<agent-message from="b">hello there</agent-message>', toolUses: [], uuid: 'p1' },
+    { role: 'user', text: 'Base directory for this skill: /somewhere\n\nInvented steps of a skill.', toolUses: [], uuid: 'm1' },
+  ]
+  await start($)
+  expect(ids(w)).toEqual(['qA'])
+  expect(w.toasts, 'no fallback, no toast').toEqual([])
+  expect(w.messageReads, 'the engine list was looked at').toBeGreaterThan(0)
+})
+
+test('A19e a typed question of the engine list whose line is not in a window that should hold it is a format miss', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('qA', 'first')
+  w.messages = [{ role: 'user', text: 'a question the file does not hold', toolUses: [], uuid: 'zz' }]
+  await start($)
+  expect(ids(w)).toEqual(['zz'])
+  expect(w.toasts).toEqual(['last answer: transcript format not recognised — showing what the engine lists'])
 })
 
 test('A19b a newest engine-listed question that IS on the chain is no fallback; the chain is the source', async ($, on) => {

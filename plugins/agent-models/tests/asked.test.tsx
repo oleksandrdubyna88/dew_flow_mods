@@ -156,13 +156,13 @@ test('A6 a submit adds a dim pending row; its press toasts; the next refresh tha
   await ui.unmount()
 })
 
-test('A6b a question typed while idle: pending until its turn begins, then its own line', async ($, on) => {
+test('A6b a question typed while idle: pending until its turn begins, then its own line; its `from` is taken before the engine stores the line', async ($, on) => {
   const w = world(on)
   const f = script(w)
   await start($)
+  w.onSubmit = () => void f.typed('qA', 'typed when idle') // the engine stores the idle prompt's line while the hooks of the submit are still working
   await typedIn($, 'typed when idle')
-  expect(pendingOf(w).map(p => p.text)).toEqual(['typed when idle'])
-  f.typed('qA', 'typed when idle')
+  expect(pendingOf(w), 'the offset is the file length before the line').toEqual([{ text: 'typed when idle', from: 0, turns: 0 }])
   await turnStart($)
   expect(pendingOf(w)).toEqual([])
   expect(ids(w)).toEqual(['qA'])
@@ -201,6 +201,27 @@ test('A7 two quick submits with the SAME text: two pending rows, which settle in
   expect(pendingOf(w)).toEqual([])
   expect(ids(w)).toEqual(['s2', 's1', 'qA'])
   await ui.unmount()
+})
+
+test('A7d one line settles ONE entry: the line of A lands after the from of B; the next refresh does not count it again for B', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('q0', 'zero')
+  await start($)
+  await typedIn($, 'A')
+  f.big('g1', 2000) // the file grows while Claude works
+  await typedIn($, 'B')
+  expect(pendingOf(w).map(p => p.text)).toEqual(['A', 'B'])
+  f.queued('qA', 'A') // its line ends after B's from
+  await turnStart($)
+  expect(pendingOf(w).map(p => p.text)).toEqual(['B'])
+  expect(pendingOf(w)[0]?.from, 'B starts after the line that settled A').toBe(w.size())
+  await turnStart($)
+  expect(pendingOf(w).map(p => p.text), 'the line of A is not counted again').toEqual(['B'])
+  f.queued('qB', 'B')
+  await turnStart($)
+  expect(pendingOf(w)).toEqual([])
+  expect(ids(w)).toEqual(['qB', 'qA', 'q0'])
 })
 
 test('A7b non-person submits (a notification, a peer, a plugin, a meta prompt, a slash command, a dropped prompt) add no pending row and write nothing', async ($, on) => {
@@ -317,6 +338,25 @@ test('A9b the tick refreshes only while the list is open or something is pending
   expect(w.reads.length).toBeGreaterThan(pendingReads)
   expect(pendingOf(w)).toEqual([])
   expect(ids(w)).toEqual(['qD', 'qC', 'qB'])
+  await ui.unmount()
+})
+
+test('A9e the engine list is read for the fallback check at the list open, the session start and the turn events, not on the tick', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('qA', 'alpha')
+  await start($)
+  const ui = await opened($)
+  const reads = w.messageReads
+  expect(reads).toBeGreaterThan(0)
+  f.typed('qB', 'bravo')
+  await tickOnce(w)
+  await tickOnce(w)
+  expect(ids(w), 'the tick did refresh').toEqual(['qB', 'qA'])
+  expect(w.messageReads, 'and read no engine list').toBe(reads)
+  f.typed('qC', 'charlie')
+  await turnStart($)
+  expect(w.messageReads).toBeGreaterThan(reads)
   await ui.unmount()
 })
 
@@ -540,6 +580,22 @@ test('A17 a pending entry with no line is dropped at its second turn.complete; t
   await turnStart($)
   expect(pendingOf(w)).toEqual([])
   expect(ids(w)).toEqual(['qR', 'qA'])
+})
+
+test('A17b a turn end while a refresh is busy is not lost: the running or the next refresh counts it', async ($, on) => {
+  const w = world(on)
+  const f = script(w)
+  f.typed('qA', 'alpha')
+  const hold = gate()
+  w.holdRead = hold.wait
+  await start($) // its refresh waits at the read
+  await typedIn($, 'ghost: a prompt that never became a line')
+  await turnComplete($) // asked while the refresh runs
+  hold.release()
+  await settle()
+  expect(pendingOf(w).map(p => p.turns), 'counted once').toEqual([1])
+  await turnComplete($)
+  expect(pendingOf(w), 'the second turn end drops it').toEqual([])
 })
 
 test('A20 a refused stat: with no recent no pending row is added; with a recent its size is the `from`', async ($, on) => {

@@ -65,3 +65,8 @@ test('A4f a walk that runs out of lines in a window that does not start the file
   expect(walk(cut, false).needsMore, 'the file starts here').toBe(false)
   expect(walk(cut, true).questions.map(q => q.id)).toEqual(['b', 'a'])
 })
+
+test('A4i an empty window of a file that has more before it asks for more; at the start of the file it does not', () => {
+  expect(walk([], true).needsMore).toBe(true)
+  expect(walk([], false).needsMore).toBe(false)
+})

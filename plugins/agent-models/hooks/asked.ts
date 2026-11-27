@@ -14,7 +14,7 @@ import { cutLines, walk } from './transcript'
 import type { Found, Walk, WalkLine } from './transcript'
 
 export const WINDOW = 1_048_576 // the first read: the last 1 MiB of the file
-export const DEEP = 4 * 1_048_576 // the one deeper read (the engine's per-read cap)
+export const DEEP = 4 * 1_048_576 - 16 // the one deeper read: the engine's per-read cap less 16 bytes (a U+FFFD at an edge makes the text longer than the bytes read, and the engine rejects an answer over the cap)
 export const RECENT_MAX = 3
 export const PENDING_MAX = 8
 const EXPIRE_TURNS = 2 // main-loop turn ends a pending entry lives through
@@ -89,9 +89,14 @@ async function walked($: EngineInterface, path: string, size: number): Promise<{
   cache = c
   let result = walk(c.lines, c.hasMore)
   if (result.needsMore && result.questions.length < RECENT_MAX && !c.isDeep) { // ONE deeper read: the window ended before three questions and no mark
-    c = await fresh($, path, size, DEEP)
-    cache = c
-    result = walk(c.lines, c.hasMore)
+    try {
+      const deeper = await fresh($, path, size, DEEP)
+      cache = deeper
+      c = deeper
+      result = walk(c.lines, c.hasMore)
+    } catch {
+      // a refused deeper read keeps what the window gave
+    }
   }
   return { walk: result, hasLines: c.lines.length > 0 }
 }
@@ -138,10 +143,23 @@ async function engineSeen($: EngineInterface, size: number | undefined): Promise
   return { list, size, chain: undefined }
 }
 
+// An engine-listed typed question the walk did not list is a format miss only when the file cannot say why: its line is not in a window that should hold
+// it, or it is a user line with no `origin` (an older format). A line the filter rejected for a known reason (a peer's, a skill body, a meta line, a
+// command) is no typed question: the next newest row is looked at. The first row the walk did list ends the check.
+function isFormatMiss(typed: readonly { uuid: string }[], chain: Walk): boolean {
+  if (chain.needsMore) return false // the window may not reach it
+  for (const q of typed) {
+    if (chain.questions.some(found => found.id === q.uuid)) return false
+    const line = chain.byId.get(q.uuid)
+    if (line === undefined || line.legacy === true) return true
+  }
+  return false
+}
+
 // Undefined: a refused or failed read, which changes nothing. A session that keeps no file, a window the walk does not recognise, and a newest
 // typed question of the engine's list that is not on the walked chain (a renamed field, an older file) are the fallback. The engine list is read
 // BEFORE the file, so a line the engine already listed is in the file the read saw.
-async function look($: EngineInterface): Promise<Seen | undefined> {
+async function look($: EngineInterface, isTick: boolean): Promise<Seen | undefined> {
   let path: string
   let size: number
   try {
@@ -154,7 +172,7 @@ async function look($: EngineInterface): Promise<Seen | undefined> {
   } catch {
     return undefined
   }
-  const newest = typedQuestions(await engineRows($, ENGINE_ROWS))[0]
+  const typed = isTick ? [] : typedQuestions(await engineRows($, ENGINE_ROWS)) // the tick looks at the file only: the engine list is read at the list open, the session start and the turn events
   let seen: { walk: Walk; hasLines: boolean }
   try {
     seen = await walked($, path, size)
@@ -162,41 +180,61 @@ async function look($: EngineInterface): Promise<Seen | undefined> {
     return undefined
   }
   const { walk: chain, hasLines } = seen
-  if ((hasLines && !chain.isRecognised) || (!chain.needsMore && newest !== undefined && !chain.questions.some(q => q.id === newest.uuid))) return engineSeen($, size)
+  if ((hasLines && !chain.isRecognised) || isFormatMiss(typed, chain)) return engineSeen($, size)
   return { list: chain.questions.slice(0, RECENT_MAX).map(({ id, text }) => ({ id, text })), size, chain: chain.questions }
 }
 
 const sameList = (a: readonly PendingQuestion[], b: readonly PendingQuestion[]): boolean => JSON.stringify(a) === JSON.stringify(b)
 
-// The entries after a refresh: the oldest k are settled (k: the questions whose line ends after the oldest entry's `from`, first come first
-// matched, no text compared; with the engine's list the questions new to the list); at a turn's end the rest count one turn and an entry at two goes.
-function settled(cur: readonly PendingQuestion[], count: (from: number) => number, isTurnEnd: boolean): readonly PendingQuestion[] {
+// What the questions settle of the oldest entry: `count` of them (the questions whose line ends after its `from`; with the engine's list the
+// questions new to the list) and `end`, the byte end of the last line they used (0 with the engine's list).
+type Settle = (from: number) => { count: number; end: number }
+
+// The entries after a refresh: the oldest k are settled (first come first matched, no text compared). A line settles ONE entry: the entries
+// that stay start after the last line used. `ends` turn ends since the last refresh count a turn for the rest, and an entry at two goes.
+function settled(cur: readonly PendingQuestion[], settle: Settle, ends: number): readonly PendingQuestion[] {
   const first = cur[0]
-  const rest = first === undefined ? cur : cur.slice(count(first.from))
-  return isTurnEnd ? rest.map(p => ({ ...p, turns: p.turns + 1 })).filter(p => p.turns < EXPIRE_TURNS) : rest
+  const { count, end } = first === undefined ? { count: 0, end: 0 } : settle(first.from)
+  const rest = cur.slice(count).map(p => (p.from < end ? { ...p, from: end } : p))
+  return ends > 0 ? rest.map(p => ({ ...p, turns: p.turns + ends })).filter(p => p.turns < EXPIRE_TURNS) : rest
 }
+
+let turnEnds = 0 // the main-loop turn ends not yet counted for the pending entries: a refresh that was busy does not lose one
 
 /**
  * Reads the file (or, in the fallback, the engine's list), writes `recent` and settles `pending`. At a turn's end (`isTurnEnd`, main loop) the entries
- * that did not settle count a turn. One refresh at a time: one asked while another runs is left (the tick comes again). Never rejects.
+ * that did not settle count a turn: the turn end is kept in a counter, which this refresh or the next one applies. `isTick`: the engine list is not
+ * read. One refresh at a time: one asked while another runs is left (the tick comes again). Never rejects.
  */
-export async function refreshRecent($: EngineInterface, isTurnEnd: boolean = false): Promise<void> {
+export async function refreshRecent($: EngineInterface, opts: { isTurnEnd?: boolean; isTick?: boolean } = {}): Promise<void> {
+  if (opts.isTurnEnd === true) turnEnds += 1
   if (isBusy) return
   isBusy = true
   const epoch = endEpoch
   try {
-    const seen = await look($)
+    const seen = await look($, opts.isTick === true)
     if (seen === undefined || epoch !== endEpoch) return
     const prior = recentOf(await read($, recent))
     const next: Recent = { questions: seen.list, size: seen.size ?? prior?.size ?? 0 }
     if (JSON.stringify(prior) !== JSON.stringify(next)) await update($, recent, cur => (epoch === endEpoch ? next : cur))
     const known = new Set(prior?.questions.map(q => q.id))
     const chain = seen.chain
-    const count = (from: number): number => (chain === undefined ? seen.list.filter(q => !known.has(q.id)).length : chain.filter(q => q.end > from).length)
-    const held = pendingOf(await read($, pending))
-    if (epoch === endEpoch && !sameList(held, settled(held, count, isTurnEnd))) {
-      await update($, pending, cur => (epoch === endEpoch ? settled(pendingOf(cur), count, isTurnEnd) : cur))
+    const settle: Settle = from => {
+      if (chain === undefined) return { count: seen.list.filter(q => !known.has(q.id)).length, end: 0 }
+      const used = chain.filter(q => q.end > from)
+      return { count: used.length, end: Math.max(0, ...used.map(q => q.end)) }
     }
+    const held = pendingOf(await read($, pending))
+    const ends = turnEnds
+    if (epoch === endEpoch && !sameList(held, settled(held, settle, ends))) {
+      turnEnds -= ends
+      try {
+        await update($, pending, cur => (epoch === endEpoch ? settled(pendingOf(cur), settle, ends) : cur))
+      } catch (error) {
+        turnEnds += ends // the write was refused: the turn ends are still to count
+        throw error
+      }
+    } else if (held.length === 0) turnEnds = 0 // nothing pending: no entry to count them for
   } catch {
     // a refused read or write: what stands stays; the next refresh tries again
   } finally {
@@ -213,20 +251,29 @@ async function sizeNow($: EngineInterface): Promise<number | undefined> {
   } catch {
     // the stat is refused: the last read's size stands in
   }
-  return recentOf(await read($, recent))?.size
+  try {
+    return recentOf(await read($, recent))?.size
+  } catch {
+    return undefined
+  }
+}
+
+/** The file's length, asked BEFORE the engine's bottom of a `prompt.submit` runs: an idle prompt's line can be in the file by the time the hook returns. Never rejects. */
+export function submitSize($: EngineInterface): Promise<number | undefined> {
+  return sizeNow($)
 }
 
 /**
- * After `next(e)` of a `prompt.submit`: a prompt the person typed (here or through the bridge) is a `pending` entry until the file holds
+ * After `next(e)` of a `prompt.submit` (`at`: `submitSize`, asked before it): a prompt the person typed (here or through the bridge) is a `pending` entry until the file holds
  * its line. A notification, a peer, a plugin, a meta prompt, a slash command, the wake text and a dropped prompt are none. Never rejects.
  */
-export async function noteSubmit($: EngineInterface, e: PromptSubmitInput, result: PromptSubmitResult): Promise<void> {
+export async function noteSubmit($: EngineInterface, e: PromptSubmitInput, result: PromptSubmitResult, at: Promise<number | undefined>): Promise<void> {
   try {
     if (result.drop !== undefined || e.command !== undefined || e.isMeta === true || !PERSON_ORIGINS.has(e.origin.kind)) return
     const text = questionText(result.text)
     if (text === undefined || isWakeText(result.text)) return // the wake text is never a question, typed or sent
     const epoch = endEpoch
-    const from = await sizeNow($)
+    const from = await at
     if (from === undefined || epoch !== endEpoch) return // no size known: no entry (it could never be settled)
     await update($, pending, cur => (epoch === endEpoch ? [...pendingOf(cur), { text, from, turns: 0 }].slice(-PENDING_MAX) : cur))
   } catch {
@@ -240,7 +287,7 @@ export async function tickAsked($: EngineInterface, isListOpen: boolean): Promis
     if (!isListOpen && pendingOf(await read($, pending)).length === 0) return
     const size = (await $.fs.stat((await $.session.info()).transcriptPath)).size
     const prior = recentOf(await read($, recent))
-    if (prior === null || prior.size !== size) await refreshRecent($)
+    if (prior === null || prior.size !== size) await refreshRecent($, { isTick: true })
   } catch {
     // the next tick looks again
   }
@@ -259,6 +306,7 @@ export async function clearAsked($: EngineInterface): Promise<void> {
   endEpoch += 1
   cache = undefined
   isToldFallback = false
+  turnEnds = 0
   await Promise.all([
     swallow(update($, recent, () => null)),
     swallow(update($, pending, () => [])),

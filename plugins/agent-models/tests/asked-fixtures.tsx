@@ -52,6 +52,8 @@ export type World = {
   isMessagesBroken: boolean
   messages: SessionMessage[] // what `$.session.messages` answers (the fallback source)
   drop: string | undefined // a prompt with this text is dropped by the engine's own bottom
+  onSubmit: (() => void) | undefined // runs in the engine's own bottom of `prompt.submit`, after a pause: what the engine stores while the hooks wait (the line of an idle prompt)
+  refuseReadOver: number | undefined // a read of more bytes than this is refused
   infos: number
   stats: number
   reads: ReadCall[]
@@ -75,7 +77,7 @@ export const world = (on: On): World => {
   const clock = base(on)
   const w: World = {
     clock, bytes: new Uint8Array(0), path: PATH, isInfoRefused: false, isStatRefused: false, isReadRefused: false, isMessagesBroken: false,
-    messages: [], drop: undefined, infos: 0, stats: 0, reads: [], messageReads: 0, toasts: [], writes: [],
+    messages: [], drop: undefined, onSubmit: undefined, refuseReadOver: undefined, infos: 0, stats: 0, reads: [], messageReads: 0, toasts: [], writes: [],
     seeds: {}, refusedKeys: new Set(), holdRead: undefined, holdStat: undefined,
     appendRaw: text => {
       const add = encoder.encode(text)
@@ -89,7 +91,13 @@ export const world = (on: On): World => {
   }
   identities(on, [() => identityOf('dev@example.com')])
   statusRuns(on, () => ok(JSON.stringify({ loggedIn: false })))
-  on('prompt.submit', (_, e) => (e.text === w.drop ? { drop: 'refused' } : { text: e.text }))
+  on('prompt.submit', async (_, e) => {
+    if (w.onSubmit !== undefined) {
+      await spin() // the hooks above go on meanwhile: their calls made before `next` returned are answered first
+      w.onSubmit()
+    }
+    return e.text === w.drop ? { drop: 'refused' } : { text: e.text }
+  })
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('session.info', () => {
@@ -108,7 +116,7 @@ export const world = (on: On): World => {
     const held = w.holdRead
     w.holdRead = undefined
     await held
-    if (w.isReadRefused) return { deny: 'refused' }
+    if (w.isReadRefused || (w.refuseReadOver !== undefined && (e.length ?? w.bytes.length) > w.refuseReadOver)) return { deny: 'refused' }
     const from = e.offset ?? 0
     const to = e.length === undefined ? w.bytes.length : from + e.length
     return { value: decoder.decode(w.bytes.slice(from, to)) } // a cut character becomes U+FFFD, as the engine's text read gives
@@ -203,6 +211,10 @@ export const script = (w: World) => {
     peer: (uuid: string): string => user(uuid, '<teammate-message from="b">hello there</teammate-message>', { origin: { kind: 'peer' } }),
     /** A peer's wrapper that the file stamps as a human line: the wrapper alone says it is no question. */
     peerWrapped: (uuid: string): string => user(uuid, '<teammate-message from="b">hello there</teammate-message>', { origin: { kind: 'human' }, promptSource: 'typed' }),
+    /** A peer's message as the engine files it: a meta line of origin peer, a header line first and the tag LATER in the text. */
+    peerReal: (uuid: string): string => user(uuid, 'Another Claude session sent a message:\n<agent-message from="b">hello there</agent-message>', { origin: { kind: 'peer' }, isMeta: true }),
+    /** A skill body or an auto-continuation row: a meta line with no origin at all. */
+    metaPlain: (uuid: string): string => user(uuid, 'Base directory for this skill: /somewhere\n\nInvented steps of a skill.', { isMeta: true }),
     /** A prompt a plugin sent as the user: no origin. */
     sent: (uuid: string, text: string): string => user(uuid, text),
     /** A compaction mark: it starts a new chain (no parent) and names the line before it as its logical parent. */
