@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { UiScrollArgs, UiScrollResult } from 'claude-code'
 
-import { cutText, droppedPin, headLine, nextPins, PIN_LIMIT, pinPress, pinText, PREFIX_MAX, runPress } from '../hooks/pins'
-import { gate, macrotask } from './answer-fixtures'
+import { cutText, droppedPin, headLine, nextPins, PIN_GONE, PIN_LIMIT, pinPress, pinText, PREFIX_MAX, runPress } from '../hooks/pins'
+import { gate, macrotask } from './asked-fixtures'
 import { SURFACES } from './limits-fixtures'
 import {
   A, B, GREY, ICON_OFF, ICON_ON, iconOf, idOf, lastListOpen, lastPins, manyPins, MAIN_SCREEN, mountRow, pin, pinButton, pinWorld,
@@ -110,8 +110,8 @@ test('L4a a press on a pin scrolls once, at once, to its id with block start', a
 
 test('L4b a pin row presses by the pin\'s id, never its text, and with the label pin', async () => {
   const mine = pin(A, 'words of the pin')
-  expect(pinPress(mine)).toEqual({ label: 'pin', id: A })
-  expect(pinPress(pin(B, A)), 'a text that looks like an id is not the target').toEqual({ label: 'pin', id: B })
+  expect(pinPress(mine)).toEqual({ label: 'pin', id: A, gone: PIN_GONE })
+  expect(pinPress(pin(B, A)), 'a text that looks like an id is not the target').toEqual({ label: 'pin', id: B, gone: PIN_GONE })
   const f = fakes()
   await runPress(f.scroll, f.toast, pinPress(mine))
   expect(f.scrolls).toEqual([{ to: { requestId: A }, block: 'start' }])

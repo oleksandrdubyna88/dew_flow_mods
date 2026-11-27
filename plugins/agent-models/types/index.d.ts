@@ -76,7 +76,25 @@ export type Limits = {
 }
 
 /**
- * The owner's last question (1.5.0), what the `last answer` list's first row scrolls to: `uuid` is the transcript message's id (known
+ * A question of the `last answer` list (1.9.0), read from the session's transcript file: `id` is the `uuid` of its line (what the screen
+ * draws it under, so what a scroll takes), `text` the clean first line of the question, cut to 60 characters.
+ */
+export type AskedQuestion = { id: string; text: string }
+
+/**
+ * The list's questions (1.9.0): the newest three on the live chain of the transcript file, newest first, and `size` the file length the
+ * read saw (the tick looks again only when the file is longer).
+ */
+export type Recent = { questions: readonly AskedQuestion[]; size: number }
+
+/**
+ * A question the person submitted that the transcript file does not hold yet (1.9.0): `text` its shown text, `from` the file's length at
+ * the submit (the first question line that ends after it is this one's), `turns` the main-loop turn ends since (an entry at 2 is dropped).
+ */
+export type PendingQuestion = { text: string; from: number; turns: number }
+
+/**
+ * The owner's last question (1.5.0, no longer written since 1.9.0: only cleared at a session end), what the `last answer` list's first row scrolls to: `uuid` is the transcript message's id (known
  * before any press, so the press scrolls without waiting); `pending` is the text of a question submitted but not yet found in the
  * transcript (queued behind a running turn, or typed into a running turn), and `previous` is the uuid of the question before it: the
  * press goes there (it is the question being answered now) and the lookup never goes back past it; the lookup takes the newest row
@@ -127,9 +145,14 @@ declare module 'claude-code' {
       limits: LimitsView
       /** The clock minute (epoch ms / 60000, floored) of the open limits line's tick; null: the clock was refused. Only its change matters: it draws the band again as the times run down. */
       limitsMinute: number | null
+      /** 1.5.0-1.8.1, no longer written or read since 1.9.0: only cleared at a session end. */
       lastQuestion: LastQuestion
-      /** The questions before the last one (1.8.0), newest first, at most 3. Absent in a state stored before 1.8.0: read it as []. */
+      /** 1.8.0-1.8.1, no longer written or read since 1.9.0: only cleared at a session end. */
       earlierQuestions: readonly EarlierQuestion[]
+      /** The list's questions (1.9.0), read from the transcript file; null: none read yet. Absent in a state stored before 1.9.0: read it as null. */
+      recent: Recent | null
+      /** The submitted questions the file does not hold yet (1.9.0), oldest first, at most 8. Absent in a state stored before 1.9.0: read it as []. */
+      pending: readonly PendingQuestion[]
       /** The pins (1.6.0), oldest first, at most 50. Absent in a state stored before 1.6.0: read it as []. */
       pins: readonly Pin[]
       /** Whether the list under the `last answer` button is open (1.6.0). Absent in a state stored before 1.6.0: read it as false. */

@@ -16,6 +16,8 @@ export const PIN_ICON = '\u{1F4CC}' // pinned: the picture
 export const PIN_ICON_OFF = '\u{1F4CC}︎' // not pinned: the text form, drawn in the grey of its Text where the terminal honours it
 export const PIN_COLOR = '#E3256B' // raspberry
 export const PIN_OFF_COLOR = '#808080'
+export const NOT_DRAWN = 'nothing drawn under that requestId' // the engine's deny for a row it draws no more (measured 2026-11-27 in fullscreen: a row from before a compaction)
+export const PIN_GONE = 'pin: that answer is not in the transcript any more (compacted?) — press x to remove it'
 
 const BLOCK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i // a transcript block's id; a `placeholder` draw has no row to scroll to
 const NOTICE = /^(?:API Error|No response requested\.)/ // the engine's own notices are no answer of Claude's
@@ -83,13 +85,14 @@ export function nextPins(cur: readonly Pin[], pin: Pin): readonly Pin[] {
 /**
  * Brings the row `id` to the top of the transcript window and tells a refusal in a toast headed `label`. It calls `scroll` BEFORE it
  * yields (no `await` ahead of the call: the engine refuses a scroll that follows an await, measured 2026-11-22); the scroll and the
- * toast are arguments so a test can hand fakes. Never throws.
+ * toast are arguments so a test can hand fakes. `gone` (a pin's press): what the toast says when the engine answers that it draws no such row; the pin stays. Never throws.
  */
-export async function scrollToRow(scroll: (args: UiScrollArgs) => Promise<UiScrollResult>, toast: (text: string) => void, label: string, id: string): Promise<void> {
+export async function scrollToRow(scroll: (args: UiScrollArgs) => Promise<UiScrollResult>, toast: (text: string) => void, label: string, id: string, gone?: string): Promise<void> {
   try {
     const result = await scroll({ to: { requestId: id }, block: 'start' })
     if (result.deny !== undefined) {
-      toast(result.deny.includes('none scrolls') ? `${label}: works in fullscreen only` : `${label}: ${reasonLine(result.deny)}`)
+      if (gone !== undefined && result.deny.includes(NOT_DRAWN)) toast(gone)
+      else toast(result.deny.includes('none scrolls') ? `${label}: works in fullscreen only` : `${label}: ${reasonLine(result.deny)}`)
     }
   } catch (error) {
     toast(`${label}: ${reasonLine(error)}`)
@@ -97,14 +100,14 @@ export async function scrollToRow(scroll: (args: UiScrollArgs) => Promise<UiScro
 }
 
 /** What a drawn press scrolls to: the row `id`, told in a toast headed `label` when the scroll is refused. */
-export type ScrollPress = { readonly label: string; readonly id: string }
+export type ScrollPress = { readonly label: string; readonly id: string; readonly gone?: string }
 
-/** The press on a pin's row of the list: the pin's block (its id, never its text); the pin stays whatever the engine says. */
-export const pinPress = (pin: Pin): ScrollPress => ({ label: 'pin', id: pin.id })
+/** The press on a pin's row of the list: the pin's block (its id, never its text); the pin stays whatever the engine says (a compacted one is told in a toast: 1.9.0). */
+export const pinPress = (pin: Pin): ScrollPress => ({ label: 'pin', id: pin.id, gone: PIN_GONE })
 
 /** Runs a drawn press: `scrollToRow` with the press's target. The scroll is called before this yields. */
 export function runPress(scroll: (args: UiScrollArgs) => Promise<UiScrollResult>, toast: (text: string) => void, press: ScrollPress): Promise<void> {
-  return scrollToRow(scroll, toast, press.label, press.id)
+  return scrollToRow(scroll, toast, press.label, press.id, press.gone)
 }
 
 /** The pin a press on `pin` drops: the oldest, when `pin` is new to a full list; undefined otherwise. */

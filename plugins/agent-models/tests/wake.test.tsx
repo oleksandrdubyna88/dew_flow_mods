@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { WAKE_GUARD_TICKS } from '../hooks/wake'
-import { COMPOSER, submitOf } from './answer-fixtures'
+import { COMPOSER, submitOf } from './asked-fixtures'
 
 import {
   advance, gate, H, labelOf, lastWake, mountBand, MIN, ON_TOAST, pressWake, spin, START, TEXT, tick, wakeText, wakeToasts, wakeWorld,
@@ -308,17 +308,19 @@ test('W10 an armed state met by a fresh module scope (a hot reload) fires once a
   expect(lastWake(w)?.nextAt).toBe(START + 20_000 + 2 * H)
 })
 
-test('W11 the wake prompt (origin plugin) is not recorded as the last question', async ($, on) => {
+test('W11 the wake prompt (origin plugin) is not recorded as a pending question', async ($, on) => {
+  on('session.info', () => ({ value: { transcriptPath: '/work/s1.jsonl' } })) // the transcript file the submit's `from` is read from
+  on('fs.stat', () => ({ value: { kind: 'file', size: 10, mtimeMs: 0, isLink: false } }))
   const w = await wakeWorld($, on)
   const ui = await mountBand($)
   await pressWake(ui)
   await advance(w, 2 * H)
   expect(w.sent).toHaveLength(1)
   expect(w.sent[0]?.origin).toMatchObject({ kind: 'plugin' })
-  expect(w.keys, 'noteSubmit wrote no lastQuestion').not.toContain('lastQuestion')
+  expect(w.keys, 'noteSubmit wrote no pending entry').not.toContain('pending')
   await $.prompt.submit(submitOf('a question the person typed', COMPOSER)) // the control: the hook does see prompts, and records a person's own
   await spin()
-  expect(w.keys, 'a composer prompt IS recorded').toContain('lastQuestion')
+  expect(w.keys, 'a composer prompt IS recorded').toContain('pending')
   await ui.unmount()
 })
 
