@@ -24,7 +24,7 @@ test('A18e the byte ends of a window cut anywhere in a Cyrillic line are the fil
   expect(cutLines(decoder.decode(bytes), 0, bytes.length).map(l => l.end), 'offset 0: every line').toEqual(ends)
   for (let k = 1; k < (ends[0] ?? 0) + 20; k += 1) {
     const cut = cutLines(decoder.decode(bytes.slice(k)), k, bytes.length)
-    const firstEnd = ends.find(e => e > k - 1 && e >= k) ?? 0 // the end of the line that holds byte k (or starts at it)
+    const firstEnd = ends.find(e => e > k) ?? 0 // the end of the line that holds byte k (or starts at it): that line is the cut one
     expect(cut.map(l => l.end), `a window from byte ${k}`).toEqual(ends.filter(e => e > firstEnd))
   }
 })

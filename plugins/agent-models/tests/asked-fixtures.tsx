@@ -18,8 +18,7 @@ export const MIB = 1_048_576
 export const COMPOSER: PromptOrigin = { kind: 'composer' }
 export const SCROLL_REJECTED = 'no implementation for ui.scroll'
 export const NOT_DRAWN = 'nothing drawn under that requestId'
-const KEYS = ['recent', 'pending', 'lastQuestion', 'earlierQuestions'] as const
-type Key = (typeof KEYS)[number]
+type Key = 'recent' | 'pending' | 'lastQuestion' | 'earlierQuestions'
 
 /** A real macrotask wait (the lib has no timer types, so the timer is read off `globalThis` and checked, never cast). */
 export const macrotask = (ms: number): Promise<void> =>
@@ -123,17 +122,24 @@ export const world = (on: On): World => {
     w.toasts.push(e.text)
     return { value: undefined }
   })
-  for (const key of KEYS) {
-    const ref = { plugin: 'agent-models', key } as const
-    let isWritten = false
-    on('state.get', ref, async (_, e, next) => (key in w.seeds && !isWritten ? { value: { value: w.seeds[key], version: 0 } } : next(e)))
-    on('state.set', ref, (_, e, next) => {
-      w.writes.push({ key, value: JSON.parse(JSON.stringify(e.value)) })
-      if (w.refusedKeys.has(key)) return { deny: 'refused' }
-      isWritten = true
-      return next(e)
-    })
+  const isWritten = new Set<Key>()
+  const seeded = (key: Key): boolean => key in w.seeds && !isWritten.has(key)
+  const answer = (key: Key) => ({ value: { value: w.seeds[key], version: 0 } })
+  const record = (key: Key, value: unknown): boolean => {
+    w.writes.push({ key, value: JSON.parse(JSON.stringify(value)) })
+    if (w.refusedKeys.has(key)) return false
+    isWritten.add(key)
+    return true
   }
+  // one pair of hooks per atom (the keyed form: the other helpers' hooks are keyed too, and an unkeyed one would clash with theirs)
+  on('state.get', { plugin: 'agent-models', key: 'recent' } as const, (_, e, next) => (seeded('recent') ? answer('recent') : next(e)))
+  on('state.set', { plugin: 'agent-models', key: 'recent' } as const, (_, e, next) => (record('recent', e.value) ? next(e) : { deny: 'refused' }))
+  on('state.get', { plugin: 'agent-models', key: 'pending' } as const, (_, e, next) => (seeded('pending') ? answer('pending') : next(e)))
+  on('state.set', { plugin: 'agent-models', key: 'pending' } as const, (_, e, next) => (record('pending', e.value) ? next(e) : { deny: 'refused' }))
+  on('state.get', { plugin: 'agent-models', key: 'lastQuestion' } as const, (_, e, next) => (seeded('lastQuestion') ? answer('lastQuestion') : next(e)))
+  on('state.set', { plugin: 'agent-models', key: 'lastQuestion' } as const, (_, e, next) => (record('lastQuestion', e.value) ? next(e) : { deny: 'refused' }))
+  on('state.get', { plugin: 'agent-models', key: 'earlierQuestions' } as const, (_, e, next) => (seeded('earlierQuestions') ? answer('earlierQuestions') : next(e)))
+  on('state.set', { plugin: 'agent-models', key: 'earlierQuestions' } as const, (_, e, next) => (record('earlierQuestions', e.value) ? next(e) : { deny: 'refused' }))
   return w
 }
 
@@ -257,7 +263,7 @@ export const tickOnce = async (w: World): Promise<void> => {
 export const band = async ($: Engine): Promise<Ui> => bandOf($)
 /** The band with the `last answer` list opened by the button. */
 export const opened = async ($: Engine): Promise<Ui> => {
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', viewport: { columns: 80, rows: 24, isFullscreen: true } })
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, isCollapsed: false }, surface: 'terminal', viewport: { columns: 80, rows: 24, isFullscreen: true } })
   await ui.press({ key: 'last-answer' })
   await settle()
   await ui.redraw()

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { BAND, SURFACES, text as drawnText } from './limits-fixtures'
-import { answer, question, session, spin } from './answer-fixtures'
+import { script, settle, start as startSession, world } from './asked-fixtures'
 import {
   A, B, FULLSCREEN, GREY, ICON_ON, iconOf, idOf, lastListOpen, lastPins, MAIN_SCREEN, manyPins, mountRow, pin, pinWorld, RASPBERRY,
   SCROLL_REJECTED, seededList, seededPins,
@@ -13,23 +13,26 @@ import {
 
 type Ui = Mounted<'terminal' | 'desktop', 'AbovePrompt'>
 const QUESTION = 'Why is this red?'
-const start = async ($: Engine) => {
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await spin()
-}
+const start = startSession
 const keysOf = async (ui: Ui) => (await ui.findAll({ type: 'Button' })).flatMap(b => (b.key === undefined ? [] : [b.key]))
-const listKeys = async (ui: Ui) => (await keysOf(ui)).filter(k => k === 'answer-last' || k.startsWith('pin-'))
+const listKeys = async (ui: Ui) => (await keysOf(ui)).filter(k => k.startsWith('answer-q-') || k.startsWith('pin-'))
 const labelOf = async (ui: Ui, key: string) => (await ui.find({ type: 'Button', key }))?.props.label
 const press = async (ui: Ui, key: string) => {
   await ui.press({ key })
-  await spin()
+  await settle()
   await ui.redraw()
 }
-// A session whose transcript holds the owner's question, the pin world, and a started session.
-const setup = async ($: Engine, on: Parameters<typeof session>[0], rows = [question(QUESTION, 'u1'), answer('a1')]) => {
-  const s = session(on, rows)
-  const w = pinWorld(on, false)
-  return { s, w }
+// A session whose transcript file holds the owner's question, and the pin world.
+const setup = async (_$: Engine, on: Parameters<typeof world>[0], questions: readonly string[] = [QUESTION]) => {
+  const w = world(on)
+  const f = script(w)
+  questions.forEach((text, i) => {
+    f.typed(`u${i + 1}`, text)
+    f.assistant(`a${i + 1}`)
+  })
+  w.messages = questions.map((text, i) => ({ role: 'user', text, toolUses: [], uuid: `u${i + 1}` })) // what the messages viewer reads
+  const p = pinWorld(on, false)
+  return { s: w, w: p }
 }
 const band = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal', viewport: typeof FULLSCREEN | typeof MAIN_SCREEN = FULLSCREEN) =>
   $.ui.mount({ ...BAND, surface, viewport })
@@ -46,7 +49,7 @@ for (const surface of SURFACES) {
     await press(ui, 'last-answer')
     expect(await labelOf(ui, 'last-answer')).toBe('last answer ▴')
     const keys = await keysOf(ui)
-    expect(keys.indexOf('answer-last')).toBeGreaterThan(keys.indexOf('last-answer'))
+    expect(keys.indexOf('answer-q-u1')).toBeGreaterThan(keys.indexOf('last-answer'))
     await press(ui, 'last-answer')
     expect(await labelOf(ui, 'last-answer')).toBe('last answer ▾')
     expect(await listKeys(ui)).toEqual([])
@@ -60,8 +63,8 @@ test('L2 the open list: the question first, then the pins oldest first, each wit
   await start($)
   const ui = await band($)
   await press(ui, 'last-answer')
-  expect(await listKeys(ui)).toEqual(['answer-last', `pin-go-${A}`, `pin-x-${A}`, `pin-go-${B}`, `pin-x-${B}`])
-  expect(await labelOf(ui, 'answer-last')).toBe(`› ${QUESTION}`)
+  expect(await listKeys(ui)).toEqual(['answer-q-u1', `pin-go-${A}`, `pin-x-${A}`, `pin-go-${B}`, `pin-x-${B}`])
+  expect(await labelOf(ui, 'answer-q-u1')).toBe(`› ${QUESTION}`)
   expect(await labelOf(ui, `pin-go-${A}`)).toBe(`${ICON_ON} first pinned answer`)
   expect(await labelOf(ui, `pin-go-${B}`)).toBe(`${ICON_ON} second pinned answer`)
   expect((await ui.find({ type: 'Text', text: ICON_ON }))?.props.color).toBe(RASPBERRY)
@@ -70,13 +73,13 @@ test('L2 the open list: the question first, then the pins oldest first, each wit
 })
 
 // The harness cannot see where the mod's scroll goes (see `pinWorld`): a press is seen by the toast of the engine's rejection, under the
-// row's own heading. The target and the order of the call are tested on `pressLastAnswer` and `pressPin` with fakes (T10, T12, L4a).
-test('L3 a press on the first row scrolls (the toast of the rejected scroll names the last answer) and does not close the list', async ($, on) => {
+// row's own heading. The target and the order of the call are tested on `questionPress` and `pinPress` with fakes (T10, A5a, L4a).
+test('L3 a press on the newest question row scrolls (the toast of the rejected scroll names the last answer) and does not close the list', async ($, on) => {
   const { s } = await setup($, on)
   await start($)
   const ui = await band($)
   await press(ui, 'last-answer')
-  await press(ui, 'answer-last')
+  await press(ui, 'answer-q-u1')
   expect(s.toasts).toEqual([`last answer: ${SCROLL_REJECTED}`])
   expect(await labelOf(ui, 'last-answer')).toBe('last answer ▴')
   await ui.unmount()
@@ -91,7 +94,7 @@ test('L4 a press on a pin row scrolls (a pin toast); L12 the scroll is refused: 
   await press(ui, `pin-go-${B}`)
   await press(ui, `pin-go-${A}`)
   expect(s.toasts, 'the engine here rejects every scroll').toEqual([`pin: ${SCROLL_REJECTED}`, `pin: ${SCROLL_REJECTED}`])
-  expect(await listKeys(ui), 'the pins stay').toEqual(['answer-last', `pin-go-${A}`, `pin-x-${A}`, `pin-go-${B}`, `pin-x-${B}`])
+  expect(await listKeys(ui), 'the pins stay').toEqual(['answer-q-u1', `pin-go-${A}`, `pin-x-${A}`, `pin-go-${B}`, `pin-x-${B}`])
   expect(lastPins(w), 'a scroll never writes the pins').toBeUndefined()
   await ui.unmount()
 })
@@ -106,7 +109,7 @@ test('L5 a press on x removes the pin: the list redraws without it and the icon 
   await press(ui, 'last-answer')
   await press(ui, `pin-x-${A}`)
   expect(lastPins(w)).toEqual([pin(B, 'two')])
-  expect(await listKeys(ui)).toEqual(['answer-last', `pin-go-${B}`, `pin-x-${B}`])
+  expect(await listKeys(ui)).toEqual(['answer-q-u1', `pin-go-${B}`, `pin-x-${B}`])
   await row.redraw()
   expect((await iconOf(row))?.props.color).toBe(GREY)
   await row.unmount()
@@ -129,11 +132,11 @@ test('L7 the list stays open after a scroll; only the button closes it', async (
   await start($)
   const ui = await band($)
   await press(ui, 'last-answer')
-  await press(ui, 'answer-last')
+  await press(ui, 'answer-q-u1')
   await press(ui, `pin-go-${A}`)
   expect(s.toasts).toHaveLength(2) // both rows scrolled (the engine here rejects the scroll)
   expect(await labelOf(ui, 'last-answer')).toBe('last answer ▴')
-  expect(await listKeys(ui)).toEqual(['answer-last', `pin-go-${A}`, `pin-x-${A}`])
+  expect(await listKeys(ui)).toEqual(['answer-q-u1', `pin-go-${A}`, `pin-x-${A}`])
   await press(ui, 'last-answer')
   expect(await listKeys(ui)).toEqual([])
   expect(lastListOpen(w)).toBe(false)
@@ -198,34 +201,6 @@ test('L9 on the terminal main screen no button and no list, even when the list i
   await ui.unmount()
 })
 
-test('L10 while a question is pending the first row shows the text before it with (sending…), and the press goes there', async ($, on) => {
-  const { s } = await setup($, on)
-  s.seed = { pending: 'a second question', previous: 'u1', previousText: QUESTION }
-  await start($)
-  const ui = await band($)
-  await press(ui, 'last-answer')
-  expect(await labelOf(ui, 'answer-last')).toBe(`› ${QUESTION} (sending…)`)
-  await press(ui, 'answer-last')
-  expect(s.toasts, 'the press scrolls (to u1: see T12 for the target); it does not say the question is missing').toEqual([`last answer: ${SCROLL_REJECTED}`])
-  await ui.unmount()
-})
-
-test('L10b a pending question with no text before it still shows a row; with no question before it the press toasts', async ($, on) => {
-  const { s } = await setup($, on)
-  s.seed = { pending: 'a second question', previous: 'u1' } // stored by 1.5.0: no previousText
-  await start($)
-  const ui = await band($)
-  await press(ui, 'last-answer')
-  expect(await labelOf(ui, 'answer-last')).toBe('› last question (sending…)')
-  await ui.unmount()
-  s.seed = { pending: 'only question' }
-  const alone = await band($) // the list is still stored open
-  expect(await labelOf(alone, 'answer-last')).toBe('› only question (sending…)')
-  await press(alone, 'answer-last')
-  expect(s.toasts).toEqual(['last answer: your question is not in the transcript yet'])
-  await alone.unmount()
-})
-
 test('L11 fifty pins: every row is drawn, nothing is cut by the mod', async ($, on) => {
   await setup($, on)
   seededPins(on, manyPins(50))
@@ -235,7 +210,7 @@ test('L11 fifty pins: every row is drawn, nothing is cut by the mod', async ($, 
   const keys = await listKeys(ui)
   expect(keys.filter(k => k.startsWith('pin-go-'))).toHaveLength(50)
   expect(keys.filter(k => k.startsWith('pin-x-'))).toHaveLength(50)
-  expect(keys[0]).toBe('answer-last')
+  expect(keys[0]).toBe('answer-q-u1')
   expect(keys[1]).toBe(`pin-go-${idOf(1)}`)
   expect(keys.at(-1)).toBe(`pin-x-${idOf(50)}`)
   await ui.unmount()
@@ -244,11 +219,11 @@ test('L11 fifty pins: every row is drawn, nothing is cut by the mod', async ($, 
 // --- the text of the first row ---
 
 test('Q1 the question text is cut to 60 characters with an ellipsis, at its first line', async ($, on) => {
-  await setup($, on, [question(`${'q'.repeat(80)}\nsecond line`, 'u1')])
+  await setup($, on, [`${'q'.repeat(80)}\nsecond line`])
   await start($)
   const ui = await band($)
   await press(ui, 'last-answer')
-  expect(await labelOf(ui, 'answer-last')).toBe(`› ${'q'.repeat(59)}…`)
+  expect(await labelOf(ui, 'answer-q-u1')).toBe(`› ${'q'.repeat(59)}…`)
   await ui.unmount()
 })
 
@@ -258,26 +233,26 @@ for (const [name, raw, shown] of [
   ['a quote mark is kept: the question is the owner\'s words', '> not a quote mark here', '> not a quote mark here'],
 ] as const) {
   test(`Q2 the question text: ${name}`, async ($, on) => {
-    await setup($, on, [question(raw, 'u1')])
+    await setup($, on, [raw])
     await start($)
     const ui = await band($)
     await press(ui, 'last-answer')
-    expect(await labelOf(ui, 'answer-last')).toBe(`› ${shown}`)
+    expect(await labelOf(ui, 'answer-q-u1')).toBe(`› ${shown}`)
     await ui.unmount()
   })
 }
 
 // --- a value stored by an older version ---
 
-test('P9 a state stored before 1.6.0 (no pins, no list flag, a 1.5.0 question with no text) reads fine', async ($, on) => {
+test('P9 a state stored before 1.6.0 (no pins, no list flag, a 1.5.0 question with no text) reads fine: the list is drawn from the file, the old value is ignored', async ($, on) => {
   const { s } = await setup($, on)
-  s.seed = { uuid: 'u1' }
+  s.seeds.lastQuestion = { uuid: 'old-u1' }
   await start($)
   const ui = await band($)
   expect(await labelOf(ui, 'last-answer')).toBe('last answer ▾')
   await press(ui, 'last-answer')
-  expect(await labelOf(ui, 'answer-last')).toBe('› last question')
-  expect(await listKeys(ui)).toEqual(['answer-last'])
+  expect(await labelOf(ui, 'answer-q-u1')).toBe(`› ${QUESTION}`)
+  expect(await listKeys(ui)).toEqual(['answer-q-u1'])
   const row = await mountRow($, A)
   expect((await iconOf(row))?.props.color, 'no pins: grey').toBe(GREY)
   await row.unmount()

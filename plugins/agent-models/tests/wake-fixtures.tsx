@@ -2,7 +2,7 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import type { On, PromptSubmitResult } from 'claude-code'
 
 import type { Wake } from '../types'
-import { gate, macrotask } from './answer-fixtures'
+import { gate, macrotask } from './asked-fixtures'
 import { BAND, ok, ownClock, spin } from './limits-fixtures'
 import type { OwnClock } from './limits-fixtures'
 

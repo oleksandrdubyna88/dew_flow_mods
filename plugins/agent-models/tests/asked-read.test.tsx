@@ -311,3 +311,17 @@ test('A10b a window that parses but holds no line the walk recognises falls back
   expect(w.toasts).toEqual([FALLBACK_TOAST])
   expect(writesOf(w, 'recent').length, 'the same fallback is not written twice').toBe(1)
 })
+
+test('A10f a file with only lines that carry no uuid (a session before its first prompt) and an engine list with no question: nothing to show, so no toast', async ($, on) => {
+  const w = world(on)
+  w.append({ type: 'file-history-snapshot', messageId: 'm1', snapshot: {} })
+  await start($)
+  expect(w.messageReads, 'the engine list was looked at').toBeGreaterThan(0)
+  expect(w.toasts).toEqual([])
+  expect(ids(w)).toEqual([])
+  const f = script(w)
+  f.typed('qA', 'the first prompt')
+  await turnStart($)
+  expect(ids(w), 'the file now holds a line the walk knows').toEqual(['qA'])
+  expect(w.toasts).toEqual([])
+})

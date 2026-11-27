@@ -42,26 +42,33 @@ The release tests use an `update` hook on the bare remote for the refused tag, b
 
 ## Mod cases (`claude plugin test`)
 
-The 460 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
+The 435 cases (as `claude plugin test` reports them) are the mod's own; they cover the band of subagent rows, the account
 and limits line (with its ceilings, retries, 5-hour and weekly reset times), tasks, messages, answer pins, the answer
-list, the wake and the recent questions, and the races between them. The first 391 were copied byte for byte with the mod.
+list, the wake and the questions read from the transcript file, and the races between them. The first 391 were copied
+byte for byte with the mod; in 1.9.0 the question cases among them were replaced (below).
 Since 1.7.0 the mod is developed in this repository, so cases are added with each version. A change under
 `plugins/agent-models/` still needs a higher `plugin.json` version.
 
 Two flows were added here. The 1.7.0 wake: W1-W14, in `tests/wake.test.tsx` (its helpers are in `tests/wake-fixtures.tsx`).
-The 1.8.0 recent questions in the `last answer` list: L1-L15 with their sub-cases (L4b, L6b-d, L7b, L8b, L11b, L12b-d), in
-`tests/answer-recent.test.tsx` (the list, the rebuilds, the session start and end) and `tests/answer-recent-races.test.tsx`
-(L12-L15, the races of the two writes of a settle); their helpers are in `tests/answer-recent-fixtures.tsx`.
-The 1.8.1 flow, the wake text never a question: V1-V14 with their sub-cases (V4b, V6b, V7a-c, V8b), in
-`tests/answer-wake-text.test.tsx` (the typed wake text, the repair of a stored wake value at the session start and at the
-list open, its races, a refused or empty read; it uses the helpers of the two fixture files above).
+The 1.9.0 flow, the questions of the `last answer` list read from the transcript file (plan `todo/PLAN_agent_models_1_9_0.md`;
+it replaced the 1.5.0-1.8.1 question cases, which tested code that 1.9.0 removed: the lookup of a submit, `lastQuestion`,
+`earlierQuestions`, the settle and its races, the repair of a wake value): A1-A21 with their sub-cases, in
+`tests/asked-read.test.tsx` (the live chain, the compaction mark, a rewind, the window and its one deeper read, the byte
+ends, the cache, the fallback to the engine's list), `tests/asked.test.tsx` (the rows and the pending row, the refresh
+points and the tick, the guard, refusals, the session end, a reload, the expiry of a pending entry), `tests/pins-deny.test.tsx`
+(A14: a pin press after a compaction), and `tests/transcript.test.tsx` (the pure cut of a window and the walk). Their helpers
+are in `tests/asked-fixtures.tsx` (a transcript file the test owns, built from invented text in the shapes of the engine's
+own lines, and the engine calls that reach it). `tests/answer.test.tsx` and `tests/answer-list.test.tsx` keep the button, the
+list's rows, the pins in the list and the views closing each other (T1, T2, T10-T12b, T14, L1-L11, Q1-Q2, P9).
+The harness cannot see where a transcript scroll goes (no `on('ui.scroll')` hook is reached by a press): a press is seen by
+the toast of the engine's rejection, and the target of a row is tested on `questionPress` and `pinPress` with a fake scroll.
 
 Known flake, R4: `tests/account-retry.test.tsx`, "R4 a timer a draw started was refused…", fails about one run in
 eight, in the 1.5.0 build too. A red run is a red run and is not re-run to get green. It is traced to the shared state
 it races on and fixed in the next mod version built here (`todo/README.md`).
 
 What the mod cases do not prove: that the engine of a later Claude Code version still accepts the mod. The type check is
-the engine's own, in `claude plugin validate --json`; `tools/type-baseline.json` holds the 149 findings of the pinned
+the engine's own, in `claude plugin validate --json`; `tools/type-baseline.json` holds the 148 findings of the pinned
 2.1.330 and can only shrink.
 
 ## The other checks of CI

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Account, AgentRow, EarlierQuestion, LastQuestion, LimitsView, Login, Pin, Tasks, Viewer } from '../types'
+import type { Account, AgentRow, AskedQuestion, LimitsView, Login, PendingQuestion, Pin, Tasks, Viewer } from '../types'
 import {
   accountLabel, ACTIVE, BUTTON_COLOR, capNote, clampIndex, CLOSE_COLOR, closeViewer, currentAccount, currentPrompts, currentViewer,
   isAccountFresh, isAccountReading, isLoginPending, LOG_NOTE, LOGIN_CEILING_MS, LOGIN_COLOR, movePage, nowOrZero, openViewer, readAccount,
@@ -9,10 +9,8 @@ import {
 } from './prompts'
 import { accountButton, currentLimits, emailOf, isLimitsShown, limitsClock, limitsRow, limitsText, tickLimits, watchLimitsMinute } from './limits'
 import { closeTasks, currentTasks, tasksButton, tasksLabel, tasksView } from './tasks'
-import {
-  accountRowCells, answerButton, answerList, clearAnswerList, clearQuestion, closeAnswerList, currentAnswerListOpen, currentEarlierQuestions, currentLastQuestion, isAnswerShown,
-  noteSubmit, restoreQuestion, retryPending,
-} from './answer'
+import { accountRowCells, answerButton, answerList, clearAnswerList, closeAnswerList, currentAnswerListOpen, isAnswerShown, tickAnswer } from './answer'
+import { clearAsked, currentPending, currentRecent, noteSubmit, refreshRecent } from './asked'
 import { clearPins, currentPins, pinnedRow } from './pins'
 import { clearWake, currentWake, wakeButton, wakeLabel, wakeTick } from './wake'
 
@@ -39,9 +37,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 }
 
 // The 2 s timer's work: the agent rows, the limits line (its minute, a passed reset's fetch), the account retry (an unread or
-// stale unknown account is read again without a draw or a turn) and the wake (hooks/wake.tsx). Each never rejects.
+// stale unknown account is read again without a draw or a turn), the wake (hooks/wake.tsx) and the transcript file's look (hooks/asked.ts, while the
+// `last answer` list is open or a question is pending). Each never rejects.
 const tick = async ($: EngineInterface): Promise<void> => {
-  await Promise.all([refresh($), tickLimits($), retryAccount($), wakeTick($)])
+  await Promise.all([refresh($), tickLimits($), retryAccount($), wakeTick($), tickAnswer($)])
 }
 
 // Reads when the last read is 60 s old; also repairs a login left pending past its ceiling.
@@ -204,9 +203,9 @@ type Page = {
   tasks: Tasks
   limits: LimitsView
   limitsNow: number | null // the draw's clock read for the open limits line; null when none was asked or it was refused
-  question: LastQuestion // what the last answer list's first row scrolls to
-  earlier: readonly EarlierQuestion[] // the questions before it: the rows after the first
-  pins: readonly Pin[] // the rows after it
+  questions: readonly AskedQuestion[] // the last answer list's questions of the transcript file, newest first
+  pendingQuestions: readonly PendingQuestion[] // the questions the file does not hold yet: drawn before them
+  pins: readonly Pin[] // the rows after them
   isAnswerListOpen: boolean
   hasAnswerButton: boolean // false on the terminal's main screen, where no transcript scroll works
   wakeLabel: string // the wake button's label of this draw (the viewer counts what is drawn)
@@ -239,7 +238,7 @@ const pageRows = ($: EngineInterface, e: RenderEvent, page: Page) => {
 // The account row: [ messages ]  <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ]  [ wake 2h ] while the viewer is closed (`lead` is the
 // messages button), <account>  [ login ]  [ tasks (n) ]  [ last answer ▾ ]  [ wake 2h ] above an open viewer.
 // The wake button (hooks/wake.tsx) arms a send of `продолжай автономно` every 2 hours; its label counts down. `last answer` (hooks/answer.tsx) is
-// left out on the terminal's main screen, where no transcript scroll works; its list (the last question, then the pins) opens under
+// left out on the terminal's main screen, where no transcript scroll works; its list (the last three questions, then the pins) opens under
 // the row. The signed-in <account> is a button: a press opens the limits line under the row (its numbers coloured by what is left,
 // with a red Close beside it). Then the last login refusal, and the tasks view or the list (never drawn beside the viewer: each
 // opener closes the other two).
@@ -267,7 +266,7 @@ const accountRow = ($: EngineInterface, e: RenderEvent, page: Page, lead?: Retur
       {limitsRow($, e, page.limits, emailOf(page.account), page.limitsNow)}
       {page.login.reason !== undefined && <Text dimColor>{refusalNote(page.login.reason)}</Text>}
       {page.tasks.isOpen && !page.view.isOpen ? tasksView($, e, page.tasks) : null}
-      {page.hasAnswerButton && page.isAnswerListOpen && !page.view.isOpen ? answerList($, e, page.question, page.earlier, page.pins) : null}
+      {page.hasAnswerButton && page.isAnswerListOpen && !page.view.isOpen ? answerList($, e, page.questions, page.pendingQuestions, page.pins) : null}
     </Box>
   )
 }
@@ -310,7 +309,7 @@ export const register: Register = on => {
     if (!isAccountReading()) {
       void readAccount($) // not awaited: the session starts as fast as before; a read already running (the draw's) is not queued twice
     }
-    void restoreQuestion($) // not awaited either: with no value (a resume) the newest question of the transcript
+    void refreshRecent($) // not awaited either: the questions of the transcript file (a resume, a reload)
     return result
   })
 
@@ -318,7 +317,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (e.agentId === undefined) {
       void refreshAccountIfStale($) // a subagent's end never reads
-      void retryPending($, true) // a question queued behind this turn is in the transcript now, maybe far back past a long answer
+      void refreshRecent($, true) // a question typed during this turn is in the file now; the pending entries that did not settle count a turn
     }
     return result
   })
@@ -326,13 +325,13 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined) {
-      void retryPending($, false) // the queued question's own turn begins: it is a transcript message now
+      void refreshRecent($) // the queued question's own turn begins: its line is in the file now
     }
     return result
   })
 
   on('session.end', async ($, e, next) => {
-    await Promise.all([clearQuestion($), clearPins($), clearAnswerList($), clearWake($)]) // before the end step: the exit shares one short bound
+    await Promise.all([clearAsked($), clearPins($), clearAnswerList($), clearWake($)]) // before the end step: the exit shares one short bound
     return next(e)
   })
 
@@ -373,15 +372,15 @@ export const register: Register = on => {
       return next(e)
     }
     const below = await next(e) // the rest of the chain draws under our band, never instead of it
-    const [list, view, acc, state, taskList, limitsView, question, earlier, pinList, isAnswerListOpen, wake] = await Promise.all([
+    const [list, view, acc, state, taskList, limitsView, questions, pendingQuestions, pinList, isAnswerListOpen, wake] = await Promise.all([
       read($, rows),
       currentViewer($),
       currentAccount($),
       read($, login),
       currentTasks($),
       currentLimits($),
-      currentLastQuestion($),
-      currentEarlierQuestions($),
+      currentRecent($),
+      currentPending($),
       currentPins($),
       currentAnswerListOpen($),
       currentWake($),
@@ -406,8 +405,8 @@ export const register: Register = on => {
       tasks: taskList,
       limits: limitsView,
       limitsNow,
-      question,
-      earlier,
+      questions,
+      pendingQuestions,
       pins: pinList,
       isAnswerListOpen,
       hasAnswerButton: isAnswerShown(e.viewport),

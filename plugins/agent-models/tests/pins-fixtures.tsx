@@ -48,7 +48,7 @@ export type PinWorld = {
 /**
  * The engine under the mod for the pin tests: the AssistantMessage row it draws (a Text with the block's text, which the mod must
  * keep), every state write and every toast; `isToasting: false` when the test already records toasts itself (the `session` of
- * answer-fixtures). The harness cannot see where the mod's own `$.ui.scroll` goes: with no engine under it a scroll rejects with
+ * asked-fixtures). The harness cannot see where the mod's own `$.ui.scroll` goes: with no engine under it a scroll rejects with
  * `no implementation for ui.scroll`, which the mod toasts (`SCROLL_REJECTED`), so a press that reached the scroll is seen by that toast.
  */
 export const pinWorld = (on: On, isToasting = true): PinWorld => {
